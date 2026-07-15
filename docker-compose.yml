@@ -1,0 +1,36 @@
+version: '3.9'
+
+services:
+  api:
+    image: tiangolo/uvicorn-gunicorn-fastapi:python3.11
+    volumes:
+      - ./api:/app
+    ports:
+      - "8000:80"
+    depends_on:
+      - db
+
+  db:
+    image: timescale/timescaledb-ha:pg14-latest
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+
+  sensor_simulator:
+    image: python:3.11-slim
+    volumes:
+      - ./simulator:/app
+    working_dir: /app
+    command: ["python", "sim.py"]
+    depends_on:
+      - api
