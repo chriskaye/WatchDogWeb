@@ -2,6 +2,8 @@ from fastapi import FastAPI, Depends, HTTPException
 from pydantic import BaseModel
 import psycopg2
 import os
+import requests
+import json
 
 app = FastAPI()
 
@@ -56,8 +58,54 @@ class CryptoProfileCreate(BaseModel):
     mode: str      # 'psk' or 'certificate'
     key_id: str    # reference into secure store
 
+class IngestPayload(BaseModel):
+    gateway_id: str
+    sensor_id: str
+    temperature: float | None = None
+    humidity: float | None = None
+    motion: bool | None = None
+    battery: float | None = None
+    ts: str | None = None  # optional; DB will default to NOW() if missing
 
 # --- Endpoints ---
+
+@app.post("/ingest")
+def ingest(data: IngestPayload):
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO sensor_data (
+            gateway_id,
+            sensor_id,
+            temperature,
+            humidity,
+            motion,
+            battery,
+            ts
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s,
+            COALESCE(%s::timestamp, NOW())
+        );
+        """,
+        (
+            data.gateway_id,
+            data.sensor_id,
+            data.temperature,
+            data.humidity,
+            data.motion,
+            data.battery,
+            data.ts,
+        ),
+    )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"status": "ingested", "gateway_id": data.gateway_id, "sensor_id": data.sensor_id}
 
 @app.post("/crypto_profiles")
 def create_crypto_profile(data: CryptoProfileCreate):
