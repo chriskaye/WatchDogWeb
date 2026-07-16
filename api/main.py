@@ -4,6 +4,8 @@ import psycopg2
 import os
 import requests
 import json
+from grafana import create_dashboard
+from db_helpers import get_sensors_and_capabilities_for_gateway
 
 app = FastAPI()
 
@@ -143,6 +145,11 @@ def register_gateway(data: GatewayRegistration):
         (data.gateway_id, data.user_id, data.name, data.firmware_version, data.crypto_id),
     )
     conn.commit()
+    
+    # --- NOW call dashboard builder ---
+    sensors_with_caps = get_sensors_and_capabilities_for_gateway(data.gateway_id)
+    create_dashboard(data.gateway_id, sensors_with_caps)
+
     cur.close()
     conn.close()
     return {"status": "gateway_registered", "gateway_id": data.gateway_id}
@@ -184,6 +191,11 @@ def register_sensor(data: SensorRegistration):
         )
 
     conn.commit()
+
+    # Call dashboard builder/updater
+    sensors_with_caps = get_sensors_and_capabilities_for_gateway(data.gateway_id)
+    create_dashboard(data.gateway_id, sensors_with_caps)
+
     cur.close()
     conn.close()
     return {"status": "sensor_registered", "sensor_id": data.sensor_id}
