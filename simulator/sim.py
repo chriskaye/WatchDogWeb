@@ -3,7 +3,7 @@ import random
 import requests
 from datetime import datetime
 
-API_URL = "http://api:80/ingest"
+API_URL = "http://api:80/ingest" #"http://localhost:8000/ingest" 
 
 def generate_payload():
     return {
@@ -23,4 +23,4 @@ while True:
         print("Sent:", payload, "Status:", r.status_code)
     except Exception as e:
         print("Error sending payload:", e)
-    time.sleep(900)
+    time.sleep(60)

@@ -2,9 +2,13 @@ version: '3.9'
 
 services:
   api:
-    image: tiangolo/uvicorn-gunicorn-fastapi:python3.11
+    image: python:3.11-slim
     volumes:
       - ./api:/app
+    working_dir: /app
+    command: >
+      bash -c "pip install -r requirements.txt &&
+              uvicorn main:app --host 0.0.0.0 --port 80"
     ports:
       - "8000:80"
     depends_on:
@@ -18,6 +22,8 @@ services:
       POSTGRES_DB: postgres
     ports:
       - "5432:5432"
+    volumes:
+    - ./postgres_data:/var/lib/postgresql/data
 
   grafana:
     image: grafana/grafana
@@ -25,12 +31,16 @@ services:
       - "3000:3000"
     depends_on:
       - db
+    volumes:
+    - ./grafana_data:/var/lib/grafana
 
   sensor_simulator:
     image: python:3.11-slim
     volumes:
       - ./simulator:/app
     working_dir: /app
-    command: ["python", "sim.py"]
+    command: >
+      bash -c "pip install -r requirements.txt &&
+              python sim.py"
     depends_on:
       - api

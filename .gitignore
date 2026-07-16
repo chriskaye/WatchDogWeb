@@ -1,6 +1,8 @@
 .devcontainer/
 .vscode/
 aa_notes.txt
+grafana_data/
+postgres_data/
 
 # macOS
 .DS_Store
