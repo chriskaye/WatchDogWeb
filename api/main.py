@@ -69,6 +69,16 @@ class IngestPayload(BaseModel):
     battery: float | None = None
     ts: str | None = None  # optional; DB will default to NOW() if missing
 
+class OtaJobCreate(BaseModel):
+    target_type: str      # 'gateway' or 'sensor'
+    target_id: str        # gateway_id or sensor_id
+    firmware_version: str
+
+class OtaJobUpdate(BaseModel):
+    ota_id: int
+    status: str           # 'in_progress','success','failed'
+    error_message: str | None = None
+
 # --- Endpoints ---
 
 @app.post("/ingest")
@@ -249,3 +259,170 @@ def gdpr_delete_user(data: GdprDeleteUser):
     cur.close()
     conn.close()
     return {"status": "user_deleted_gdpr", "user_id": data.user_id}
+
+@app.post("/ota/jobs/create")
+def create_ota_job(data: OtaJobCreate):
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        INSERT INTO ota_jobs (target_type, target_id, firmware_version)
+        VALUES (%s, %s, %s)
+        RETURNING ota_id;
+        """,
+        (data.target_type, data.target_id, data.firmware_version),
+    )
+    ota_id = cur.fetchone()[0]
+
+    # mark target as pending
+    if data.target_type == "gateway":
+        cur.execute(
+            """
+            UPDATE gateways
+            SET desired_firmware_version = %s,
+                ota_status = 'pending'
+            WHERE gateway_id = %s;
+            """,
+            (data.firmware_version, data.target_id),
+        )
+    elif data.target_type == "sensor":
+        cur.execute(
+            """
+            UPDATE sensors
+            SET desired_firmware_version = %s,
+                ota_status = 'pending'
+            WHERE sensor_id = %s;
+            """,
+            (data.firmware_version, data.target_id),
+        )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"status": "ota_job_created", "ota_id": ota_id}
+
+@app.get("/ota/jobs/pending")
+def get_pending_ota_jobs(gateway_id: str):
+    conn = get_db()
+    cur = conn.cursor()
+
+    # gateway jobs: target_id = gateway_id
+    # sensor jobs: sensors attached to this gateway
+    cur.execute(
+        """
+        SELECT j.ota_id, j.target_type, j.target_id, j.firmware_version
+        FROM ota_jobs j
+        LEFT JOIN sensors s
+          ON j.target_type = 'sensor' AND j.target_id = s.sensor_id
+        WHERE j.status = 'pending'
+          AND (
+                (j.target_type = 'gateway' AND j.target_id = %s)
+             OR (j.target_type = 'sensor' AND s.gateway_id = %s)
+          );
+        """,
+        (gateway_id, gateway_id),
+    )
+
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    jobs = [
+        {
+            "ota_id": ota_id,
+            "target_type": target_type,
+            "target_id": target_id,
+            "firmware_version": fw,
+        }
+        for ota_id, target_type, target_id, fw in rows
+    ]
+
+    return {"jobs": jobs}
+
+
+@app.post("/ota/jobs/update")
+def update_ota_job(data: OtaJobUpdate):
+    conn = get_db()
+    cur = conn.cursor()
+
+    # update job status + timestamps
+    cur.execute(
+        """
+        UPDATE ota_jobs
+        SET status = %s,
+            error_message = %s,
+            started_at = CASE WHEN %s = 'in_progress' THEN NOW() ELSE started_at END,
+            completed_at = CASE WHEN %s IN ('success','failed') THEN NOW() ELSE completed_at END
+        WHERE ota_id = %s;
+        """,
+        (data.status, data.error_message, data.status, data.status, data.ota_id),
+    )
+
+    # fetch target info
+    cur.execute(
+        "SELECT target_type, target_id, firmware_version FROM ota_jobs WHERE ota_id = %s;",
+        (data.ota_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        conn.commit()
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="OTA job not found")
+
+    target_type, target_id, firmware_version = row
+
+    # update target firmware + ota_status
+    if data.status == "success":
+        if target_type == "gateway":
+            cur.execute(
+                """
+                UPDATE gateways
+                SET firmware_version = %s,
+                    desired_firmware_version = %s,
+                    ota_status = 'success'
+                WHERE gateway_id = %s;
+                """,
+                (firmware_version, firmware_version, target_id),
+            )
+        elif target_type == "sensor":
+            cur.execute(
+                """
+                UPDATE sensors
+                SET firmware_version = %s,
+                    desired_firmware_version = %s,
+                    ota_status = 'success'
+                WHERE sensor_id = %s;
+                """,
+                (firmware_version, firmware_version, target_id),
+            )
+    elif data.status == "failed":
+        if target_type == "gateway":
+            cur.execute(
+                "UPDATE gateways SET ota_status = 'failed' WHERE gateway_id = %s;",
+                (target_id,),
+            )
+        elif target_type == "sensor":
+            cur.execute(
+                "UPDATE sensors SET ota_status = 'failed' WHERE sensor_id = %s;",
+                (target_id,),
+            )
+    elif data.status == "in_progress":
+        if target_type == "gateway":
+            cur.execute(
+                "UPDATE gateways SET ota_status = 'in_progress' WHERE gateway_id = %s;",
+                (target_id,),
+            )
+        elif target_type == "sensor":
+            cur.execute(
+                "UPDATE sensors SET ota_status = 'in_progress' WHERE sensor_id = %s;",
+                (target_id,),
+            )
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {"status": "ota_job_updated", "ota_id": data.ota_id}
