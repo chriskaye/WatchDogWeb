@@ -52,8 +52,8 @@ if st.session_state.mode is None:
 # ---------- LOGIN FORM ----------
 elif st.session_state.mode == "login":
     st.subheader("Log In")
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
+    email = st.text_input("Email", key="login_email_input")
+    password = st.text_input("Password", type="password", key="login_password_input")
 
     colA, colB = st.columns(2)
     with colA:
@@ -69,9 +69,9 @@ elif st.session_state.mode == "login":
 # ---------- CREATE ACCOUNT FORM ----------
 elif st.session_state.mode == "create":
     st.subheader("Create Account")
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
-    confirm = st.text_input("Confirm Password", type="password")
+    email = st.text_input("Email", key="create_email_input")
+    password = st.text_input("Password", type="password", key="create_password_input")
+    confirm = st.text_input("Confirm Password", type="password", key="create_confirm_input")
 
     colA, colB = st.columns(2)
     with colA:
