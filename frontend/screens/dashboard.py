@@ -8,7 +8,7 @@ st.set_page_config(page_title="Dashboard", page_icon="favicon.ico", layout="wide
 theme = st.session_state.get("theme", "watchdog")
 accent = "#00e5ff" if theme == "watchdog" else "#ff9800"
 
-if st.session_state.auth["is_authenticated"]:
+if st.session_state.get("logged_in"):
     st.sidebar.title("Menu")
     st.sidebar.button("Log Out", on_click=lambda: st.session_state.auth.update({
         "is_authenticated": False,

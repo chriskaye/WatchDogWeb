@@ -2,7 +2,7 @@ import streamlit as st
 
 st.set_page_config(page_title="User Settings", page_icon="favicon.ico", layout="wide")
 
-if st.session_state.auth["is_authenticated"]:
+if st.session_state.get("logged_in"):
     st.sidebar.title("Menu")
     st.sidebar.button("Log Out", on_click=lambda: st.session_state.auth.update({
         "is_authenticated": False,
