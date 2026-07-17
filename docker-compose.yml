@@ -1,6 +1,21 @@
 
 services:
+  frontend:
+    image: python:3.12
+    volumes:
+      - ./frontend:/app
+    working_dir: /app
+    command: >
+      sh -c "apt-get update && apt-get upgrade -y && pip install --upgrade pip && pip install  --no-cache-dir -r requirements.txt && streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
+    ports:
+      - "8501:8501"
+    depends_on:
+      - db
+      - api
+      - grafana
+  
   api:
+    image: watchdogweb-api:latest 
     build: ./api
     volumes:
       - ./api:/app
@@ -13,18 +28,17 @@ services:
       - db
 
   sensor_simulator:
-    image: python:3.11-slim
+    image: python:3.12
     volumes:
       - ./simulator:/app
     working_dir: /app
     command: >
-      bash -c "pip install -r requirements.txt &&
-              python sim.py"
+      bash -c "apt-get update && apt-get upgrade -y && pip install -r requirements.txt && python sim.py"
     depends_on:
       - api
 
   db:
-    image: timescale/timescaledb-ha:pg14-latest
+    image: postgres:latest
     environment:
       POSTGRES_PASSWORD: example
       POSTGRES_USER: postgres
@@ -32,16 +46,14 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/home/postgres/pgdata/data
+      - ./postgres_data:/backups
 
   grafana:
-    image: grafana/grafana
+    image: grafana/grafana:latest
     ports:
       - "3000:3000"
     depends_on:
       - db
     volumes:
-    - ./grafana_data:/var/lib/grafana
+      - ./grafana_data:/var/lib/grafana
 
-volumes:
-  postgres_data:
