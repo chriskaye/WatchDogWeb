@@ -9,6 +9,7 @@ if "logged_in" not in st.session_state:
 landing_page = st.Page("screens/landing.py", title="WatchDog", default=True)
 login_page = st.Page("screens/login.py", title="Log In")
 create_account_page = st.Page("screens/create_account.py", title="Create Account")
+about_page = st.Page("screens/about.py", title="About")
 
 # ---------- LOGGED-IN NAVIGATION ----------
 dashboard_page = st.Page("screens/dashboard.py", title="Dashboard", default=True)
@@ -21,6 +22,7 @@ if st.session_state.logged_in:
 else:
     # position="hidden" removes the sidebar nav entirely — landing/login/create
     # account are only reachable via st.switch_page, never by direct URL click
-    pg = st.navigation([landing_page, login_page, create_account_page], position="hidden")
+    #pg = st.navigation([landing_page, login_page, create_account_page], position="hidden")
+    pg = st.navigation([landing_page, about_page])
 
 pg.run()

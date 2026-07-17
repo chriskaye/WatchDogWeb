@@ -9,7 +9,7 @@ verify_token = st.query_params.get("token")
 if verify_token and not st.session_state.get("verification_handled"):
     st.session_state.verification_handled = True
     with st.container(horizontal_alignment="center"):
-        st.title("WatchDog")
+        st.title("WatchDog", text_alignment="center")
         st.markdown("---")
         try:
             verify_email(verify_token)
@@ -26,7 +26,7 @@ if verify_token and not st.session_state.get("verification_handled"):
 
 # ---------- LANDING PAGE CONTENT ----------
 with st.container(horizontal_alignment="center"):
-    st.title("WatchDog")
+    st.title("WatchDog", text_alignment="center")
     st.markdown("---")
     if st.session_state.mode is None:
         st.image("assets/watchdog_banner.png",
