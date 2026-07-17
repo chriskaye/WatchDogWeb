@@ -18,11 +18,10 @@ settings_page = st.Page("screens/settings.py", title="Settings")
 about_page = st.Page("screens/about.py", title="About")
 
 if st.session_state.logged_in:
-    pg = st.navigation([dashboard_page, configuration_page, settings_page, about_page])
+    pg = st.navigation([dashboard_page, configuration_page, settings_page])
 else:
     # position="hidden" removes the sidebar nav entirely — landing/login/create
     # account are only reachable via st.switch_page, never by direct URL click
-    #pg = st.navigation([landing_page, login_page, create_account_page], position="hidden")
-    pg = st.navigation([landing_page, about_page])
+    pg = st.navigation([landing_page, login_page, create_account_page], position="hidden")
 
 pg.run()
