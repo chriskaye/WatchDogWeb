@@ -193,7 +193,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         user_id = payload.get("sub")
         if user_id is None:
             raise credentials_exception
-    except JWTError:
+        user_id = int(user_id)  # sub is always a string in the token; cast back for the DB lookup
+    except (JWTError, ValueError):
         raise credentials_exception
     user = get_user_by_id(user_id)
     if user is None:
@@ -311,7 +312,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     if not user.is_verified:
         raise HTTPException(status_code=403, detail="Email not verified")
 
-    access_token = create_access_token(data={"sub": user.user_id})
+    access_token = create_access_token(data={"sub": str(user.user_id)})
     return {"access_token": access_token, "token_type": "bearer"}
 
 @app.get("/verify") # process email varification links
