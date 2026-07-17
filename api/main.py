@@ -210,7 +210,7 @@ def require_role(user: User, allowed: list[str]):
 # --- Sending Email stub
 
 def send_verification_email(email: str, token: str):
-    verify_url +  = FRONTEND_BASE_URL + f"/verify?token={token}"
+    verify_url = FRONTEND_BASE_URL + f"/verify?token={token}"
     # Replace this with real email sending later
     print(f"[DEBUG] Send verification email to {email}: {verify_url}")
 
