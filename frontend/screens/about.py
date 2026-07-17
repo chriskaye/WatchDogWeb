@@ -14,5 +14,3 @@ This page will later include:
 - Contact information
 """)
 
-if st.button("Back to Landing"):
-    st.switch_page("pages/1_Landing.py")
