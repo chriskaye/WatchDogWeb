@@ -15,7 +15,7 @@ from db_helpers import get_sensors_and_capabilities_for_gateway
 app = FastAPI()
 
 # --- Auth setup ---
-
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:8501")
 SECRET_KEY = os.getenv("SECRET_KEY", "CHANGE_THIS_SECRET")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
@@ -411,6 +411,11 @@ def invite_user(data: InviteUser, current_user: User = Depends(get_current_user)
 
     user_id = create_unverified_user_in_org(data.email, current_user.org_id, data.role)
     return {"status": "invited", "user_id": user_id}
+
+# add this endpoint, e.g. near list_auth_methods
+@app.get("/users/me", response_model=User)
+def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
 
 @app.get("/users/me/auth-methods") # list log-in methods for logged-in user
 def list_auth_methods(current_user: User = Depends(get_current_user)):

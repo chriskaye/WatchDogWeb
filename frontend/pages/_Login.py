@@ -1,52 +1,42 @@
 import streamlit as st
-import requests
+from api_client import login, get_me, ApiError
 
-API_BASE = "http://localhost:8000"  # adjust to your FastAPI gateway
+st.set_page_config(page_title="WatchDog - Log In", page_icon="assets/favicon.ico")
+st.title("Log In")
 
-# Hide the whole sidebar
-st.markdown("""
-    <style>
-        section[data-testid="stSidebar"] {
-            display: none;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
-st.set_page_config(page_title="Login [WatchDog]", page_icon="favicon.ico", layout="centered")
-
-st.title("Processing Login")
-
-email = st.session_state.get("login_email")
-password = st.session_state.get("login_password")
+email = st.session_state.get("login_email", "")
+password = st.session_state.get("login_password", "")
 
 if not email or not password:
-    st.error("No login data received.")
+    st.warning("No login details found. Please go back and enter your credentials.")
+    if st.button("Back"):
+        st.switch_page("app.py")
     st.stop()
 
-# Your login logic here
-st.write(f"Logging in user: {email}")
+with st.spinner("Signing in..."):
+    try:
+        token_data = login(email, password)
+        access_token = token_data["access_token"]
+        user = get_me(access_token)
 
+        st.session_state.access_token = access_token
+        st.session_state.user = user
+        st.session_state.logged_in = True
+        del st.session_state["login_email"]
+        del st.session_state["login_password"]
 
+    except ApiError as e:
+        if e.status_code == 403:
+            st.error("Your email hasn't been verified yet. Check your inbox for the verification link.")
+        else:
+            st.error(f"Log in failed: {e.detail}")
+        if st.button("Back"):
+            st.switch_page("app.py")
+        st.stop()
+    except Exception:
+        st.error("Could not reach the WatchDog server. Please try again shortly.")
+        if st.button("Back"):
+            st.switch_page("app.py")
+        st.stop()
 
-if st.session_state.auth["is_authenticated"]:
-    st.sidebar.title("Menu")
-    st.sidebar.button("Log Out", on_click=lambda: st.session_state.auth.update({
-        "is_authenticated": False,
-        "user": None,
-        "token": None,
-    }))
-
-st.markdown("## Log In")
-login_email = st.text_input("Email", key="login_email")
-login_password = st.text_input("Password", type="password", key="login_password")
-
-#login_col = st.columns(1)
-
-#with login_col:
-if st.button("Log In"):
-    ok, err = login(login_email, login_password)
-    if ok:
-        st.success("Logged in successfully.")
-        st.switch_page("pages/1_Dashboard.py")
-    else:
-        st.error(f"Login failed: {err}")
+st.switch_page("app.py")

@@ -1,57 +1,50 @@
 import streamlit as st
-import requests
+from api_client import register, ApiError
 
-# Hide the whole sidebar
-st.markdown("""
-    <style>
-        section[data-testid="stSidebar"] {
-            display: none;
-        }
-    </style>
-""", unsafe_allow_html=True)
+st.set_page_config(page_title="WatchDog - Create Account", page_icon="assets/favicon.ico")
+st.title("Create Account")
 
-if "auth" not in st.session_state:
-    st.session_state.auth = {
-        "is_authenticated": False,
-        "username": None,
-    }
+email = st.session_state.get("new_email", "")
+password = st.session_state.get("new_password", "")
+confirm = st.session_state.get("new_confirm", "")
 
-st.set_page_config(page_title="Create Account [WatchDog]", page_icon="favicon.ico", layout="centered")
+if not email or not password:
+    st.warning("No account details found. Please go back and fill in the form.")
+    if st.button("Back"):
+        st.switch_page("app.py")
+    st.stop()
 
-API_BASE = "http://localhost:8000"  # adjust to your FastAPI gateway
+if password != confirm:
+    st.error("Passwords do not match.")
+    if st.button("Back"):
+        st.switch_page("app.py")
+    st.stop()
 
+if len(password) < 8:
+    st.error("Password must be at least 8 characters.")
+    if st.button("Back"):
+        st.switch_page("app.py")
+    st.stop()
 
-def signup(email, password):
+with st.spinner("Creating your account..."):
     try:
-        resp = requests.post(
-            f"{API_BASE}/auth/register",
-            json={"email": email, "password": password},
-            timeout=5,
-        )
-        if resp.status_code == 201:
-            return True, None
-        else:
-            return False, resp.text
-    except Exception as e:
-        return False, str(e)
+        result = register(email, password)
+        for key in ("new_email", "new_password", "new_confirm"):
+            st.session_state.pop(key, None)
+    except ApiError as e:
+        st.error(f"Could not create account: {e.detail}")
+        if st.button("Back"):
+            st.switch_page("app.py")
+        st.stop()
+    except Exception:
+        st.error("Could not reach the WatchDog server. Please try again shortly.")
+        if st.button("Back"):
+            st.switch_page("app.py")
+        st.stop()
 
-if st.session_state.auth["is_authenticated"]:
-    st.sidebar.title("Menu")
-    st.sidebar.button("Log Out", on_click=lambda: st.session_state.auth.update({
-        "is_authenticated": False,
-        "user": None,
-        "token": None,
-    }))
+st.success(f"Account created for {result['email']}!")
+st.info("Check your inbox for a verification link — it expires in 24 hours.")
 
-signup_col = st.columns(1)
-
-with signup_col:
-    st.markdown("### Sign Up")
-    signup_email = st.text_input("New Email", key="signup_email")
-    signup_password = st.text_input("New Password", type="password", key="signup_password")
-    if st.button("Create Account"):
-        ok, err = signup(signup_email, signup_password)
-        if ok:
-            st.success("Account created. You can now log in.")
-        else:
-            st.error(f"Sign-up failed: {err}")
+if st.button("Back to Log In"):
+    st.session_state.mode = "login"
+    st.switch_page("app.py")
