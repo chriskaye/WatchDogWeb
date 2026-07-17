@@ -1,6 +1,9 @@
 import streamlit as st
 from api_client import register, ApiError
 
+print(f"[DEBUG] create_account.py running — session_state keys: {list(st.session_state.keys())}", flush=True)
+print(f"[DEBUG] new_email={st.session_state.get('new_email')!r} new_password_set={'new_password' in st.session_state}", flush=True)
+
 st.title("Create Account")
 
 email = st.session_state.get("new_email", "")

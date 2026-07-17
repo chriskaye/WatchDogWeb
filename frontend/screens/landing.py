@@ -76,9 +76,11 @@ elif st.session_state.mode == "create":
     colA, colB = st.columns(2)
     with colA:
         if st.button("Submit Account Creation", type="primary", width="stretch"):
+            print(f"[DEBUG] submit clicked — email={email!r} pw_len={len(password)} confirm_len={len(confirm)}", flush=True)
             st.session_state.new_email = email
             st.session_state.new_password = password
             st.session_state.new_confirm = confirm
+            print(f"[DEBUG] session_state.new_email now = {st.session_state.get('new_email')!r}", flush=True)
             st.switch_page("screens/create_account.py")
     with colB:
         if st.button("Cancel", type="secondary", width="stretch"):
