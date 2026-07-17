@@ -1,9 +1,9 @@
 import streamlit as st
 import requests
-from utils_auth import require_auth
+import pandas as pd
+import numpy as np
 
 st.set_page_config(page_title="Dashboard", page_icon="favicon.ico", layout="wide")
-require_auth()
 
 theme = st.session_state.get("theme", "watchdog")
 accent = "#00e5ff" if theme == "watchdog" else "#ff9800"
@@ -32,9 +32,6 @@ st.markdown("---")
 st.markdown("### Live Metrics")
 
 # Placeholder chart
-import pandas as pd
-import numpy as np
-
 data = pd.DataFrame(
     {
         "time": pd.date_range("2026-07-16", periods=20, freq="T"),

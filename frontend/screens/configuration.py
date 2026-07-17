@@ -1,8 +1,6 @@
 import streamlit as st
-from utils_auth import require_auth
 
 st.set_page_config(page_title="Configuration", page_icon="favicon.ico", layout="wide")
-require_auth()
 
 if st.session_state.auth["is_authenticated"]:
     st.sidebar.title("Menu")
