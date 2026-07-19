@@ -23,6 +23,6 @@ push_alerts = st.checkbox("Push alerts", value=False)
 
 st.markdown("---")
 st.markdown("### Account")
-st.write(f"Current user: {st.session_state.auth.get('user')}")
+st.write(f"Current user: {st.session_state.user['email']}")
 if st.button("Delete Account (placeholder)"):
     st.warning("Account deletion flow not implemented yet.")

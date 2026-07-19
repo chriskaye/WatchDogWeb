@@ -4,6 +4,8 @@ aa_notes.txt
 grafana_data/
 postgres_data/
 *.docx
+*.pdf
+*.png
 
 # macOS
 .DS_Store
