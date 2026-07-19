@@ -12,7 +12,6 @@ services:
     depends_on:
       - db
       - api
-      - grafana
   
   api:
     image: watchdogweb-api:latest 
@@ -47,13 +46,3 @@ services:
       - "5432:5432"
     volumes:
       - ./postgres_data:/backups
-
-  grafana:
-    image: grafana/grafana:latest
-    ports:
-      - "3000:3000"
-    depends_on:
-      - db
-    volumes:
-      - ./grafana_data:/var/lib/grafana
-

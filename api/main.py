@@ -9,7 +9,6 @@ from jose import JWTError, jwt
 import bcrypt
 import requests
 import json
-from grafana import create_dashboard
 from db_helpers import get_sensors_and_capabilities_for_gateway
 
 app = FastAPI()
