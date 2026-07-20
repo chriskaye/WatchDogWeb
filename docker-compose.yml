@@ -5,6 +5,8 @@ services:
     volumes:
       - ./frontend:/app
     working_dir: /app
+    environment:
+      - API_BASE_URL=${API_BASE_URL}
     command: >
       sh -c "apt-get update && apt-get upgrade -y && pip install --upgrade pip && pip install  --no-cache-dir -r requirements.txt && streamlit run app.py --server.port=8501 --server.address=0.0.0.0"
     ports:
@@ -19,6 +21,23 @@ services:
     volumes:
       - ./api:/app
     working_dir: /app
+    environment:
+    - SECRET_KEY=${SECRET_KEY}
+    - DB_HOST=${DB_HOST}
+    - DB_PORT=${DB_PORT}
+    - DB_USER=${DB_USER}
+    - DB_PASSWORD=${DB_PASSWORD}
+    - DB_NAME=${DB_NAME}
+    - FRONTEND_BASE_URL=${FRONTEND_BASE_URL}
+    - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+    - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+    - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+    - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID}
+    - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET}
+    - MICROSOFT_REDIRECT_URI=${MICROSOFT_REDIRECT_URI}
+    - X_CLIENT_ID=${X_CLIENT_ID}
+    - X_CLIENT_SECRET=${X_CLIENT_SECRET}
+    - X_REDIRECT_URI=${X_REDIRECT_URI}
     command: >
       bash -c "pip install -r requirements.txt && uvicorn main:app --host 0.0.0.0 --port 80"
     ports:
