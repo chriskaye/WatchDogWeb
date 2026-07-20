@@ -58,10 +58,14 @@ services:
   db:
     image: postgres:latest
     environment:
-      POSTGRES_PASSWORD: example
-      POSTGRES_USER: postgres
-      POSTGRES_DB: postgres
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
     ports:
       - "5432:5432"
     volumes:
-      - ./postgres_data:/backups
+      - /postgres_data:/var/lib/postgresql/data
+      - ./postgres_backups:/backups
+
+volumes:
+  postgres_data:
