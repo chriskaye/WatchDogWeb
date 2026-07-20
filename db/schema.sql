@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict dkaPd0TjPMvCDxhon3TlFYzM5r1SjSQB0HHOHdTmxgpuQUfKSKWCCTYNde4ErAj
+\restrict lQHbhG0DJ7MDWVgL1wRMWfkL9Ic9TQmtL6Hm5Kj1HU7ojDfSOa7ovrgOjhdLggM
 
 -- Dumped from database version 18.4 (Debian 18.4-1.pgdg13+1)
 -- Dumped by pg_dump version 18.4 (Debian 18.4-1.pgdg13+1)
@@ -20,7 +20,7 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- Name: alert_status; Type: TYPE; Schema: public; Owner: -
+-- Name: alert_status; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.alert_status AS ENUM (
@@ -30,8 +30,10 @@ CREATE TYPE public.alert_status AS ENUM (
 );
 
 
+ALTER TYPE public.alert_status OWNER TO psql_admin;
+
 --
--- Name: backup_schedule_type; Type: TYPE; Schema: public; Owner: -
+-- Name: backup_schedule_type; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.backup_schedule_type AS ENUM (
@@ -43,8 +45,10 @@ CREATE TYPE public.backup_schedule_type AS ENUM (
 );
 
 
+ALTER TYPE public.backup_schedule_type OWNER TO psql_admin;
+
 --
--- Name: backup_status; Type: TYPE; Schema: public; Owner: -
+-- Name: backup_status; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.backup_status AS ENUM (
@@ -55,8 +59,10 @@ CREATE TYPE public.backup_status AS ENUM (
 );
 
 
+ALTER TYPE public.backup_status OWNER TO psql_admin;
+
 --
--- Name: device_type; Type: TYPE; Schema: public; Owner: -
+-- Name: device_type; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.device_type AS ENUM (
@@ -65,8 +71,10 @@ CREATE TYPE public.device_type AS ENUM (
 );
 
 
+ALTER TYPE public.device_type OWNER TO psql_admin;
+
 --
--- Name: gdpr_deletion_status; Type: TYPE; Schema: public; Owner: -
+-- Name: gdpr_deletion_status; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.gdpr_deletion_status AS ENUM (
@@ -76,8 +84,10 @@ CREATE TYPE public.gdpr_deletion_status AS ENUM (
 );
 
 
+ALTER TYPE public.gdpr_deletion_status OWNER TO psql_admin;
+
 --
--- Name: gpio_pin_status; Type: TYPE; Schema: public; Owner: -
+-- Name: gpio_pin_status; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.gpio_pin_status AS ENUM (
@@ -87,8 +97,10 @@ CREATE TYPE public.gpio_pin_status AS ENUM (
 );
 
 
+ALTER TYPE public.gpio_pin_status OWNER TO psql_admin;
+
 --
--- Name: installed_by_type; Type: TYPE; Schema: public; Owner: -
+-- Name: installed_by_type; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.installed_by_type AS ENUM (
@@ -97,8 +109,10 @@ CREATE TYPE public.installed_by_type AS ENUM (
 );
 
 
+ALTER TYPE public.installed_by_type OWNER TO psql_admin;
+
 --
--- Name: site_role; Type: TYPE; Schema: public; Owner: -
+-- Name: site_role; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.site_role AS ENUM (
@@ -110,8 +124,10 @@ CREATE TYPE public.site_role AS ENUM (
 );
 
 
+ALTER TYPE public.site_role OWNER TO psql_admin;
+
 --
--- Name: user_status; Type: TYPE; Schema: public; Owner: -
+-- Name: user_status; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.user_status AS ENUM (
@@ -125,8 +141,10 @@ CREATE TYPE public.user_status AS ENUM (
 );
 
 
+ALTER TYPE public.user_status OWNER TO psql_admin;
+
 --
--- Name: verification_reason; Type: TYPE; Schema: public; Owner: -
+-- Name: verification_reason; Type: TYPE; Schema: public; Owner: psql_admin
 --
 
 CREATE TYPE public.verification_reason AS ENUM (
@@ -138,8 +156,10 @@ CREATE TYPE public.verification_reason AS ENUM (
 );
 
 
+ALTER TYPE public.verification_reason OWNER TO psql_admin;
+
 --
--- Name: create_org_backup_tables(integer); Type: FUNCTION; Schema: public; Owner: -
+-- Name: create_org_backup_tables(integer); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.create_org_backup_tables(p_org_id integer) RETURNS void
@@ -178,8 +198,10 @@ END;
 $$;
 
 
+ALTER FUNCTION public.create_org_backup_tables(p_org_id integer) OWNER TO psql_admin;
+
 --
--- Name: create_org_event_log(integer); Type: FUNCTION; Schema: public; Owner: -
+-- Name: create_org_event_log(integer); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.create_org_event_log(p_org_id integer) RETURNS void
@@ -207,8 +229,10 @@ END;
 $$;
 
 
+ALTER FUNCTION public.create_org_event_log(p_org_id integer) OWNER TO psql_admin;
+
 --
--- Name: hard_delete_gateway(text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: hard_delete_gateway(text); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.hard_delete_gateway(p_gateway_id text) RETURNS void
@@ -232,8 +256,10 @@ END;
 $$;
 
 
+ALTER FUNCTION public.hard_delete_gateway(p_gateway_id text) OWNER TO psql_admin;
+
 --
--- Name: hard_delete_organisation(integer); Type: FUNCTION; Schema: public; Owner: -
+-- Name: hard_delete_organisation(integer); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.hard_delete_organisation(p_org_id integer) RETURNS void
@@ -259,8 +285,10 @@ END;
 $$;
 
 
+ALTER FUNCTION public.hard_delete_organisation(p_org_id integer) OWNER TO psql_admin;
+
 --
--- Name: hard_delete_user(integer); Type: FUNCTION; Schema: public; Owner: -
+-- Name: hard_delete_user(integer); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.hard_delete_user(p_user_id integer) RETURNS void
@@ -281,8 +309,10 @@ END;
 $$;
 
 
+ALTER FUNCTION public.hard_delete_user(p_user_id integer) OWNER TO psql_admin;
+
 --
--- Name: protect_last_global_admin(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: protect_last_global_admin(); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.protect_last_global_admin() RETURNS trigger
@@ -322,8 +352,10 @@ END;
 $$;
 
 
+ALTER FUNCTION public.protect_last_global_admin() OWNER TO psql_admin;
+
 --
--- Name: stamp_granted_at(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: stamp_granted_at(); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.stamp_granted_at() RETURNS trigger
@@ -339,8 +371,10 @@ END;
 $$;
 
 
+ALTER FUNCTION public.stamp_granted_at() OWNER TO psql_admin;
+
 --
--- Name: trg_create_org_backup_tables(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trg_create_org_backup_tables(); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.trg_create_org_backup_tables() RETURNS trigger
@@ -353,8 +387,10 @@ END;
 $$;
 
 
+ALTER FUNCTION public.trg_create_org_backup_tables() OWNER TO psql_admin;
+
 --
--- Name: trg_create_org_event_log(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trg_create_org_event_log(); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.trg_create_org_event_log() RETURNS trigger
@@ -367,8 +403,10 @@ END;
 $$;
 
 
+ALTER FUNCTION public.trg_create_org_event_log() OWNER TO psql_admin;
+
 --
--- Name: upsert_device_latest_status(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: upsert_device_latest_status(); Type: FUNCTION; Schema: public; Owner: psql_admin
 --
 
 CREATE FUNCTION public.upsert_device_latest_status() RETURNS trigger
@@ -408,12 +446,14 @@ END;
 $$;
 
 
+ALTER FUNCTION public.upsert_device_latest_status() OWNER TO psql_admin;
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
 --
--- Name: alert_rules; Type: TABLE; Schema: public; Owner: -
+-- Name: alert_rules; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.alert_rules (
@@ -428,8 +468,10 @@ CREATE TABLE public.alert_rules (
 );
 
 
+ALTER TABLE public.alert_rules OWNER TO psql_admin;
+
 --
--- Name: alert_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: alert_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.alert_rules_id_seq
@@ -441,15 +483,17 @@ CREATE SEQUENCE public.alert_rules_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.alert_rules_id_seq OWNER TO psql_admin;
+
 --
--- Name: alert_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: alert_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.alert_rules_id_seq OWNED BY public.alert_rules.alert_rule_id;
 
 
 --
--- Name: alert_template_rules; Type: TABLE; Schema: public; Owner: -
+-- Name: alert_template_rules; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.alert_template_rules (
@@ -461,8 +505,10 @@ CREATE TABLE public.alert_template_rules (
 );
 
 
+ALTER TABLE public.alert_template_rules OWNER TO psql_admin;
+
 --
--- Name: alert_template_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: alert_template_rules_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.alert_template_rules_id_seq
@@ -474,15 +520,17 @@ CREATE SEQUENCE public.alert_template_rules_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.alert_template_rules_id_seq OWNER TO psql_admin;
+
 --
--- Name: alert_template_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: alert_template_rules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.alert_template_rules_id_seq OWNED BY public.alert_template_rules.alert_template_rule_id;
 
 
 --
--- Name: alert_templates; Type: TABLE; Schema: public; Owner: -
+-- Name: alert_templates; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.alert_templates (
@@ -494,8 +542,10 @@ CREATE TABLE public.alert_templates (
 );
 
 
+ALTER TABLE public.alert_templates OWNER TO psql_admin;
+
 --
--- Name: alert_templates_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: alert_templates_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.alert_templates_id_seq
@@ -507,15 +557,17 @@ CREATE SEQUENCE public.alert_templates_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.alert_templates_id_seq OWNER TO psql_admin;
+
 --
--- Name: alert_templates_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: alert_templates_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.alert_templates_id_seq OWNED BY public.alert_templates.alert_template_id;
 
 
 --
--- Name: alerts; Type: TABLE; Schema: public; Owner: -
+-- Name: alerts; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.alerts (
@@ -532,8 +584,10 @@ CREATE TABLE public.alerts (
 );
 
 
+ALTER TABLE public.alerts OWNER TO psql_admin;
+
 --
--- Name: alerts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: alerts_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.alerts_id_seq
@@ -545,99 +599,17 @@ CREATE SEQUENCE public.alerts_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.alerts_id_seq OWNER TO psql_admin;
+
 --
--- Name: alerts_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: alerts_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.alerts_id_seq OWNED BY public.alerts.alert_id;
 
 
 --
--- Name: backup_snapshot_data_org_1; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.backup_snapshot_data_org_1 (
-    snapshot_data_id bigint NOT NULL,
-    source_table text NOT NULL,
-    row_hash text NOT NULL,
-    row_data jsonb NOT NULL,
-    first_seen_at timestamp without time zone DEFAULT now()
-);
-
-
---
--- Name: backup_snapshot_data_org_1_snapshot_data_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.backup_snapshot_data_org_1_snapshot_data_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: backup_snapshot_data_org_1_snapshot_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.backup_snapshot_data_org_1_snapshot_data_id_seq OWNED BY public.backup_snapshot_data_org_1.snapshot_data_id;
-
-
---
--- Name: backup_snapshot_data_org_3; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.backup_snapshot_data_org_3 (
-    snapshot_data_id bigint NOT NULL,
-    source_table text NOT NULL,
-    row_hash text NOT NULL,
-    row_data jsonb NOT NULL,
-    first_seen_at timestamp without time zone DEFAULT now()
-);
-
-
---
--- Name: backup_snapshot_data_org_3_snapshot_data_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.backup_snapshot_data_org_3_snapshot_data_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: backup_snapshot_data_org_3_snapshot_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.backup_snapshot_data_org_3_snapshot_data_id_seq OWNED BY public.backup_snapshot_data_org_3.snapshot_data_id;
-
-
---
--- Name: backup_snapshot_links_org_1; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.backup_snapshot_links_org_1 (
-    backup_id integer NOT NULL,
-    snapshot_data_id bigint NOT NULL
-);
-
-
---
--- Name: backup_snapshot_links_org_3; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.backup_snapshot_links_org_3 (
-    backup_id integer NOT NULL,
-    snapshot_data_id bigint NOT NULL
-);
-
-
---
--- Name: backups; Type: TABLE; Schema: public; Owner: -
+-- Name: backups; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.backups (
@@ -655,8 +627,10 @@ CREATE TABLE public.backups (
 );
 
 
+ALTER TABLE public.backups OWNER TO psql_admin;
+
 --
--- Name: backups_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: backups_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.backups_id_seq
@@ -668,15 +642,17 @@ CREATE SEQUENCE public.backups_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.backups_id_seq OWNER TO psql_admin;
+
 --
--- Name: backups_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: backups_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.backups_id_seq OWNED BY public.backups.backup_id;
 
 
 --
--- Name: crypto_profiles; Type: TABLE; Schema: public; Owner: -
+-- Name: crypto_profiles; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.crypto_profiles (
@@ -690,8 +666,10 @@ CREATE TABLE public.crypto_profiles (
 );
 
 
+ALTER TABLE public.crypto_profiles OWNER TO psql_admin;
+
 --
--- Name: crypto_profiles_crypto_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: crypto_profiles_crypto_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.crypto_profiles_crypto_id_seq
@@ -703,15 +681,17 @@ CREATE SEQUENCE public.crypto_profiles_crypto_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.crypto_profiles_crypto_id_seq OWNER TO psql_admin;
+
 --
--- Name: crypto_profiles_crypto_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: crypto_profiles_crypto_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.crypto_profiles_crypto_id_seq OWNED BY public.crypto_profiles.crypto_id;
 
 
 --
--- Name: device_installed_modules; Type: TABLE; Schema: public; Owner: -
+-- Name: device_installed_modules; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.device_installed_modules (
@@ -725,8 +705,10 @@ CREATE TABLE public.device_installed_modules (
 );
 
 
+ALTER TABLE public.device_installed_modules OWNER TO psql_admin;
+
 --
--- Name: device_installed_modules_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: device_installed_modules_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.device_installed_modules_id_seq
@@ -738,15 +720,17 @@ CREATE SEQUENCE public.device_installed_modules_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.device_installed_modules_id_seq OWNER TO psql_admin;
+
 --
--- Name: device_installed_modules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: device_installed_modules_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.device_installed_modules_id_seq OWNED BY public.device_installed_modules.device_installed_module_id;
 
 
 --
--- Name: device_latest_status; Type: TABLE; Schema: public; Owner: -
+-- Name: device_latest_status; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.device_latest_status (
@@ -762,8 +746,10 @@ CREATE TABLE public.device_latest_status (
 );
 
 
+ALTER TABLE public.device_latest_status OWNER TO psql_admin;
+
 --
--- Name: device_radios; Type: TABLE; Schema: public; Owner: -
+-- Name: device_radios; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.device_radios (
@@ -775,8 +761,10 @@ CREATE TABLE public.device_radios (
 );
 
 
+ALTER TABLE public.device_radios OWNER TO psql_admin;
+
 --
--- Name: device_radios_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: device_radios_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.device_radios_id_seq
@@ -788,15 +776,17 @@ CREATE SEQUENCE public.device_radios_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.device_radios_id_seq OWNER TO psql_admin;
+
 --
--- Name: device_radios_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: device_radios_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.device_radios_id_seq OWNED BY public.device_radios.device_radio_id;
 
 
 --
--- Name: device_registry; Type: TABLE; Schema: public; Owner: -
+-- Name: device_registry; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.device_registry (
@@ -813,8 +803,10 @@ CREATE TABLE public.device_registry (
 );
 
 
+ALTER TABLE public.device_registry OWNER TO psql_admin;
+
 --
--- Name: gateways; Type: TABLE; Schema: public; Owner: -
+-- Name: gateways; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.gateways (
@@ -833,8 +825,10 @@ CREATE TABLE public.gateways (
 );
 
 
+ALTER TABLE public.gateways OWNER TO psql_admin;
+
 --
--- Name: gdpr_deletion_requests; Type: TABLE; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.gdpr_deletion_requests (
@@ -851,8 +845,10 @@ CREATE TABLE public.gdpr_deletion_requests (
 );
 
 
+ALTER TABLE public.gdpr_deletion_requests OWNER TO psql_admin;
+
 --
--- Name: gdpr_deletion_requests_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.gdpr_deletion_requests_id_seq
@@ -864,15 +860,17 @@ CREATE SEQUENCE public.gdpr_deletion_requests_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.gdpr_deletion_requests_id_seq OWNER TO psql_admin;
+
 --
--- Name: gdpr_deletion_requests_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.gdpr_deletion_requests_id_seq OWNED BY public.gdpr_deletion_requests.gdpr_deletion_request_id;
 
 
 --
--- Name: mcu_variant_gpio_pins; Type: TABLE; Schema: public; Owner: -
+-- Name: mcu_variant_gpio_pins; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.mcu_variant_gpio_pins (
@@ -885,8 +883,10 @@ CREATE TABLE public.mcu_variant_gpio_pins (
 );
 
 
+ALTER TABLE public.mcu_variant_gpio_pins OWNER TO psql_admin;
+
 --
--- Name: mcu_variant_gpio_pins_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: mcu_variant_gpio_pins_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.mcu_variant_gpio_pins_id_seq
@@ -898,15 +898,17 @@ CREATE SEQUENCE public.mcu_variant_gpio_pins_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.mcu_variant_gpio_pins_id_seq OWNER TO psql_admin;
+
 --
--- Name: mcu_variant_gpio_pins_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: mcu_variant_gpio_pins_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.mcu_variant_gpio_pins_id_seq OWNED BY public.mcu_variant_gpio_pins.mcu_variant_gpio_pin_id;
 
 
 --
--- Name: mcu_variants; Type: TABLE; Schema: public; Owner: -
+-- Name: mcu_variants; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.mcu_variants (
@@ -916,8 +918,10 @@ CREATE TABLE public.mcu_variants (
 );
 
 
+ALTER TABLE public.mcu_variants OWNER TO psql_admin;
+
 --
--- Name: mcu_variants_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: mcu_variants_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.mcu_variants_id_seq
@@ -929,15 +933,17 @@ CREATE SEQUENCE public.mcu_variants_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.mcu_variants_id_seq OWNER TO psql_admin;
+
 --
--- Name: mcu_variants_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: mcu_variants_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.mcu_variants_id_seq OWNED BY public.mcu_variants.mcu_variant_id;
 
 
 --
--- Name: module_mcu_compatibility; Type: TABLE; Schema: public; Owner: -
+-- Name: module_mcu_compatibility; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.module_mcu_compatibility (
@@ -946,8 +952,10 @@ CREATE TABLE public.module_mcu_compatibility (
 );
 
 
+ALTER TABLE public.module_mcu_compatibility OWNER TO psql_admin;
+
 --
--- Name: node_template_module_gpio_pins; Type: TABLE; Schema: public; Owner: -
+-- Name: node_template_module_gpio_pins; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.node_template_module_gpio_pins (
@@ -958,8 +966,10 @@ CREATE TABLE public.node_template_module_gpio_pins (
 );
 
 
+ALTER TABLE public.node_template_module_gpio_pins OWNER TO psql_admin;
+
 --
--- Name: node_template_module_pins; Type: TABLE; Schema: public; Owner: -
+-- Name: node_template_module_pins; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.node_template_module_pins (
@@ -971,8 +981,10 @@ CREATE TABLE public.node_template_module_pins (
 );
 
 
+ALTER TABLE public.node_template_module_pins OWNER TO psql_admin;
+
 --
--- Name: node_template_module_pins_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: node_template_module_pins_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.node_template_module_pins_id_seq
@@ -984,15 +996,17 @@ CREATE SEQUENCE public.node_template_module_pins_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.node_template_module_pins_id_seq OWNER TO psql_admin;
+
 --
--- Name: node_template_module_pins_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: node_template_module_pins_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.node_template_module_pins_id_seq OWNED BY public.node_template_module_pins.node_template_module_pin_id;
 
 
 --
--- Name: node_templates; Type: TABLE; Schema: public; Owner: -
+-- Name: node_templates; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.node_templates (
@@ -1014,8 +1028,10 @@ CREATE TABLE public.node_templates (
 );
 
 
+ALTER TABLE public.node_templates OWNER TO psql_admin;
+
 --
--- Name: node_templates_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: node_templates_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.node_templates_id_seq
@@ -1027,15 +1043,17 @@ CREATE SEQUENCE public.node_templates_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.node_templates_id_seq OWNER TO psql_admin;
+
 --
--- Name: node_templates_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: node_templates_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.node_templates_id_seq OWNED BY public.node_templates.node_template_id;
 
 
 --
--- Name: ntm_gpio_pins_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: ntm_gpio_pins_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.ntm_gpio_pins_id_seq
@@ -1047,15 +1065,17 @@ CREATE SEQUENCE public.ntm_gpio_pins_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.ntm_gpio_pins_id_seq OWNER TO psql_admin;
+
 --
--- Name: ntm_gpio_pins_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: ntm_gpio_pins_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.ntm_gpio_pins_id_seq OWNED BY public.node_template_module_gpio_pins.node_template_module_gpio_pin_id;
 
 
 --
--- Name: org_backup_settings; Type: TABLE; Schema: public; Owner: -
+-- Name: org_backup_settings; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.org_backup_settings (
@@ -1069,76 +1089,10 @@ CREATE TABLE public.org_backup_settings (
 );
 
 
---
--- Name: org_event_log_org_1; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.org_event_log_org_1 (
-    event_id bigint NOT NULL,
-    event_type text NOT NULL,
-    actor_user_id integer,
-    target_type text NOT NULL,
-    target_id text,
-    details jsonb,
-    created_at timestamp without time zone DEFAULT now()
-);
-
+ALTER TABLE public.org_backup_settings OWNER TO psql_admin;
 
 --
--- Name: org_event_log_org_1_event_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.org_event_log_org_1_event_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: org_event_log_org_1_event_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.org_event_log_org_1_event_id_seq OWNED BY public.org_event_log_org_1.event_id;
-
-
---
--- Name: org_event_log_org_3; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.org_event_log_org_3 (
-    event_id bigint NOT NULL,
-    event_type text NOT NULL,
-    actor_user_id integer,
-    target_type text NOT NULL,
-    target_id text,
-    details jsonb,
-    created_at timestamp without time zone DEFAULT now()
-);
-
-
---
--- Name: org_event_log_org_3_event_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public.org_event_log_org_3_event_id_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: org_event_log_org_3_event_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public.org_event_log_org_3_event_id_seq OWNED BY public.org_event_log_org_3.event_id;
-
-
---
--- Name: organisations; Type: TABLE; Schema: public; Owner: -
+-- Name: organisations; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.organisations (
@@ -1148,8 +1102,10 @@ CREATE TABLE public.organisations (
 );
 
 
+ALTER TABLE public.organisations OWNER TO psql_admin;
+
 --
--- Name: organisations_org_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: organisations_org_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.organisations_org_id_seq
@@ -1161,15 +1117,17 @@ CREATE SEQUENCE public.organisations_org_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.organisations_org_id_seq OWNER TO psql_admin;
+
 --
--- Name: organisations_org_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: organisations_org_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.organisations_org_id_seq OWNED BY public.organisations.org_id;
 
 
 --
--- Name: ota_jobs; Type: TABLE; Schema: public; Owner: -
+-- Name: ota_jobs; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.ota_jobs (
@@ -1185,8 +1143,10 @@ CREATE TABLE public.ota_jobs (
 );
 
 
+ALTER TABLE public.ota_jobs OWNER TO psql_admin;
+
 --
--- Name: ota_jobs_ota_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: ota_jobs_ota_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.ota_jobs_ota_id_seq
@@ -1198,15 +1158,17 @@ CREATE SEQUENCE public.ota_jobs_ota_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.ota_jobs_ota_id_seq OWNER TO psql_admin;
+
 --
--- Name: ota_jobs_ota_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: ota_jobs_ota_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.ota_jobs_ota_id_seq OWNED BY public.ota_jobs.ota_id;
 
 
 --
--- Name: role_hierarchy; Type: TABLE; Schema: public; Owner: -
+-- Name: role_hierarchy; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.role_hierarchy (
@@ -1215,8 +1177,10 @@ CREATE TABLE public.role_hierarchy (
 );
 
 
+ALTER TABLE public.role_hierarchy OWNER TO psql_admin;
+
 --
--- Name: sensor_capabilities; Type: TABLE; Schema: public; Owner: -
+-- Name: sensor_capabilities; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.sensor_capabilities (
@@ -1229,8 +1193,10 @@ CREATE TABLE public.sensor_capabilities (
 );
 
 
+ALTER TABLE public.sensor_capabilities OWNER TO psql_admin;
+
 --
--- Name: sensor_capabilities_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: sensor_capabilities_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.sensor_capabilities_id_seq
@@ -1242,15 +1208,17 @@ CREATE SEQUENCE public.sensor_capabilities_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.sensor_capabilities_id_seq OWNER TO psql_admin;
+
 --
--- Name: sensor_capabilities_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: sensor_capabilities_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.sensor_capabilities_id_seq OWNED BY public.sensor_capabilities.id;
 
 
 --
--- Name: sensor_data; Type: TABLE; Schema: public; Owner: -
+-- Name: sensor_data; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.sensor_data (
@@ -1265,8 +1233,10 @@ CREATE TABLE public.sensor_data (
 );
 
 
+ALTER TABLE public.sensor_data OWNER TO psql_admin;
+
 --
--- Name: sensor_data_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: sensor_data_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.sensor_data_id_seq
@@ -1278,15 +1248,17 @@ CREATE SEQUENCE public.sensor_data_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.sensor_data_id_seq OWNER TO psql_admin;
+
 --
--- Name: sensor_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: sensor_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.sensor_data_id_seq OWNED BY public.sensor_data.id;
 
 
 --
--- Name: sensor_module_types; Type: TABLE; Schema: public; Owner: -
+-- Name: sensor_module_types; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.sensor_module_types (
@@ -1299,8 +1271,10 @@ CREATE TABLE public.sensor_module_types (
 );
 
 
+ALTER TABLE public.sensor_module_types OWNER TO psql_admin;
+
 --
--- Name: sensor_module_types_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: sensor_module_types_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.sensor_module_types_id_seq
@@ -1312,15 +1286,17 @@ CREATE SEQUENCE public.sensor_module_types_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.sensor_module_types_id_seq OWNER TO psql_admin;
+
 --
--- Name: sensor_module_types_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: sensor_module_types_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.sensor_module_types_id_seq OWNED BY public.sensor_module_types.module_type_id;
 
 
 --
--- Name: sensors; Type: TABLE; Schema: public; Owner: -
+-- Name: sensors; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.sensors (
@@ -1339,8 +1315,10 @@ CREATE TABLE public.sensors (
 );
 
 
+ALTER TABLE public.sensors OWNER TO psql_admin;
+
 --
--- Name: sites; Type: TABLE; Schema: public; Owner: -
+-- Name: sites; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.sites (
@@ -1357,8 +1335,10 @@ CREATE TABLE public.sites (
 );
 
 
+ALTER TABLE public.sites OWNER TO psql_admin;
+
 --
--- Name: sites_site_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: sites_site_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.sites_site_id_seq
@@ -1370,15 +1350,54 @@ CREATE SEQUENCE public.sites_site_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.sites_site_id_seq OWNER TO psql_admin;
+
 --
--- Name: sites_site_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: sites_site_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.sites_site_id_seq OWNED BY public.sites.site_id;
 
 
 --
--- Name: user_site_roles; Type: TABLE; Schema: public; Owner: -
+-- Name: user_auth_methods; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.user_auth_methods (
+    auth_id integer NOT NULL,
+    user_id integer NOT NULL,
+    method_type text NOT NULL,
+    provider_sub text,
+    created_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.user_auth_methods OWNER TO psql_admin;
+
+--
+-- Name: user_auth_methods_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.user_auth_methods_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.user_auth_methods_id_seq OWNER TO psql_admin;
+
+--
+-- Name: user_auth_methods_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.user_auth_methods_id_seq OWNED BY public.user_auth_methods.auth_id;
+
+
+--
+-- Name: user_site_roles; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.user_site_roles (
@@ -1392,8 +1411,10 @@ CREATE TABLE public.user_site_roles (
 );
 
 
+ALTER TABLE public.user_site_roles OWNER TO psql_admin;
+
 --
--- Name: user_site_roles_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: user_site_roles_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.user_site_roles_id_seq
@@ -1405,15 +1426,17 @@ CREATE SEQUENCE public.user_site_roles_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.user_site_roles_id_seq OWNER TO psql_admin;
+
 --
--- Name: user_site_roles_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: user_site_roles_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.user_site_roles_id_seq OWNED BY public.user_site_roles.user_site_role_id;
 
 
 --
--- Name: user_verification_tokens; Type: TABLE; Schema: public; Owner: -
+-- Name: user_verification_tokens; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.user_verification_tokens (
@@ -1427,8 +1450,10 @@ CREATE TABLE public.user_verification_tokens (
 );
 
 
+ALTER TABLE public.user_verification_tokens OWNER TO psql_admin;
+
 --
--- Name: user_verification_tokens_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: user_verification_tokens_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.user_verification_tokens_id_seq
@@ -1440,15 +1465,17 @@ CREATE SEQUENCE public.user_verification_tokens_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.user_verification_tokens_id_seq OWNER TO psql_admin;
+
 --
--- Name: user_verification_tokens_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: user_verification_tokens_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.user_verification_tokens_id_seq OWNED BY public.user_verification_tokens.token_id;
 
 
 --
--- Name: users; Type: TABLE; Schema: public; Owner: -
+-- Name: users; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
 CREATE TABLE public.users (
@@ -1459,8 +1486,6 @@ CREATE TABLE public.users (
     org_id integer,
     role text,
     is_verified boolean DEFAULT false,
-    social_provider text,
-    social_sub text,
     status public.user_status DEFAULT 'active'::public.user_status NOT NULL,
     status_changed_at timestamp without time zone DEFAULT now(),
     is_locked boolean DEFAULT false NOT NULL,
@@ -1474,8 +1499,10 @@ CREATE TABLE public.users (
 );
 
 
+ALTER TABLE public.users OWNER TO psql_admin;
+
 --
--- Name: users_user_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+-- Name: users_user_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
 --
 
 CREATE SEQUENCE public.users_user_id_seq
@@ -1487,204 +1514,185 @@ CREATE SEQUENCE public.users_user_id_seq
     CACHE 1;
 
 
+ALTER SEQUENCE public.users_user_id_seq OWNER TO psql_admin;
+
 --
--- Name: users_user_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+-- Name: users_user_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
 --
 
 ALTER SEQUENCE public.users_user_id_seq OWNED BY public.users.user_id;
 
 
 --
--- Name: alert_rules alert_rule_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: alert_rules alert_rule_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_rules ALTER COLUMN alert_rule_id SET DEFAULT nextval('public.alert_rules_id_seq'::regclass);
 
 
 --
--- Name: alert_template_rules alert_template_rule_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: alert_template_rules alert_template_rule_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_template_rules ALTER COLUMN alert_template_rule_id SET DEFAULT nextval('public.alert_template_rules_id_seq'::regclass);
 
 
 --
--- Name: alert_templates alert_template_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: alert_templates alert_template_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_templates ALTER COLUMN alert_template_id SET DEFAULT nextval('public.alert_templates_id_seq'::regclass);
 
 
 --
--- Name: alerts alert_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: alerts alert_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alerts ALTER COLUMN alert_id SET DEFAULT nextval('public.alerts_id_seq'::regclass);
 
 
 --
--- Name: backup_snapshot_data_org_1 snapshot_data_id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_data_org_1 ALTER COLUMN snapshot_data_id SET DEFAULT nextval('public.backup_snapshot_data_org_1_snapshot_data_id_seq'::regclass);
-
-
---
--- Name: backup_snapshot_data_org_3 snapshot_data_id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_data_org_3 ALTER COLUMN snapshot_data_id SET DEFAULT nextval('public.backup_snapshot_data_org_3_snapshot_data_id_seq'::regclass);
-
-
---
--- Name: backups backup_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: backups backup_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.backups ALTER COLUMN backup_id SET DEFAULT nextval('public.backups_id_seq'::regclass);
 
 
 --
--- Name: crypto_profiles crypto_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: crypto_profiles crypto_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.crypto_profiles ALTER COLUMN crypto_id SET DEFAULT nextval('public.crypto_profiles_crypto_id_seq'::regclass);
 
 
 --
--- Name: device_installed_modules device_installed_module_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: device_installed_modules device_installed_module_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_installed_modules ALTER COLUMN device_installed_module_id SET DEFAULT nextval('public.device_installed_modules_id_seq'::regclass);
 
 
 --
--- Name: device_radios device_radio_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: device_radios device_radio_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_radios ALTER COLUMN device_radio_id SET DEFAULT nextval('public.device_radios_id_seq'::regclass);
 
 
 --
--- Name: gdpr_deletion_requests gdpr_deletion_request_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests gdpr_deletion_request_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gdpr_deletion_requests ALTER COLUMN gdpr_deletion_request_id SET DEFAULT nextval('public.gdpr_deletion_requests_id_seq'::regclass);
 
 
 --
--- Name: mcu_variant_gpio_pins mcu_variant_gpio_pin_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: mcu_variant_gpio_pins mcu_variant_gpio_pin_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.mcu_variant_gpio_pins ALTER COLUMN mcu_variant_gpio_pin_id SET DEFAULT nextval('public.mcu_variant_gpio_pins_id_seq'::regclass);
 
 
 --
--- Name: mcu_variants mcu_variant_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: mcu_variants mcu_variant_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.mcu_variants ALTER COLUMN mcu_variant_id SET DEFAULT nextval('public.mcu_variants_id_seq'::regclass);
 
 
 --
--- Name: node_template_module_gpio_pins node_template_module_gpio_pin_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: node_template_module_gpio_pins node_template_module_gpio_pin_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_template_module_gpio_pins ALTER COLUMN node_template_module_gpio_pin_id SET DEFAULT nextval('public.ntm_gpio_pins_id_seq'::regclass);
 
 
 --
--- Name: node_template_module_pins node_template_module_pin_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: node_template_module_pins node_template_module_pin_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_template_module_pins ALTER COLUMN node_template_module_pin_id SET DEFAULT nextval('public.node_template_module_pins_id_seq'::regclass);
 
 
 --
--- Name: node_templates node_template_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: node_templates node_template_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_templates ALTER COLUMN node_template_id SET DEFAULT nextval('public.node_templates_id_seq'::regclass);
 
 
 --
--- Name: org_event_log_org_1 event_id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.org_event_log_org_1 ALTER COLUMN event_id SET DEFAULT nextval('public.org_event_log_org_1_event_id_seq'::regclass);
-
-
---
--- Name: org_event_log_org_3 event_id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.org_event_log_org_3 ALTER COLUMN event_id SET DEFAULT nextval('public.org_event_log_org_3_event_id_seq'::regclass);
-
-
---
--- Name: organisations org_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: organisations org_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.organisations ALTER COLUMN org_id SET DEFAULT nextval('public.organisations_org_id_seq'::regclass);
 
 
 --
--- Name: ota_jobs ota_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: ota_jobs ota_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.ota_jobs ALTER COLUMN ota_id SET DEFAULT nextval('public.ota_jobs_ota_id_seq'::regclass);
 
 
 --
--- Name: sensor_capabilities id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: sensor_capabilities id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensor_capabilities ALTER COLUMN id SET DEFAULT nextval('public.sensor_capabilities_id_seq'::regclass);
 
 
 --
--- Name: sensor_data id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: sensor_data id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensor_data ALTER COLUMN id SET DEFAULT nextval('public.sensor_data_id_seq'::regclass);
 
 
 --
--- Name: sensor_module_types module_type_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: sensor_module_types module_type_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensor_module_types ALTER COLUMN module_type_id SET DEFAULT nextval('public.sensor_module_types_id_seq'::regclass);
 
 
 --
--- Name: sites site_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: sites site_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sites ALTER COLUMN site_id SET DEFAULT nextval('public.sites_site_id_seq'::regclass);
 
 
 --
--- Name: user_site_roles user_site_role_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: user_auth_methods auth_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.user_auth_methods ALTER COLUMN auth_id SET DEFAULT nextval('public.user_auth_methods_id_seq'::regclass);
+
+
+--
+-- Name: user_site_roles user_site_role_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.user_site_roles ALTER COLUMN user_site_role_id SET DEFAULT nextval('public.user_site_roles_id_seq'::regclass);
 
 
 --
--- Name: user_verification_tokens token_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: user_verification_tokens token_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.user_verification_tokens ALTER COLUMN token_id SET DEFAULT nextval('public.user_verification_tokens_id_seq'::regclass);
 
 
 --
--- Name: users user_id; Type: DEFAULT; Schema: public; Owner: -
+-- Name: users user_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.users ALTER COLUMN user_id SET DEFAULT nextval('public.users_user_id_seq'::regclass);
 
 
 --
--- Name: alert_rules alert_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: alert_rules alert_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_rules
@@ -1692,7 +1700,7 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
--- Name: alert_template_rules alert_template_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: alert_template_rules alert_template_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_template_rules
@@ -1700,7 +1708,7 @@ ALTER TABLE ONLY public.alert_template_rules
 
 
 --
--- Name: alert_templates alert_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: alert_templates alert_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_templates
@@ -1708,7 +1716,7 @@ ALTER TABLE ONLY public.alert_templates
 
 
 --
--- Name: alerts alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: alerts alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alerts
@@ -1716,39 +1724,7 @@ ALTER TABLE ONLY public.alerts
 
 
 --
--- Name: backup_snapshot_data_org_1 backup_snapshot_data_org_1_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_data_org_1
-    ADD CONSTRAINT backup_snapshot_data_org_1_pkey PRIMARY KEY (snapshot_data_id);
-
-
---
--- Name: backup_snapshot_data_org_3 backup_snapshot_data_org_3_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_data_org_3
-    ADD CONSTRAINT backup_snapshot_data_org_3_pkey PRIMARY KEY (snapshot_data_id);
-
-
---
--- Name: backup_snapshot_links_org_1 backup_snapshot_links_org_1_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_links_org_1
-    ADD CONSTRAINT backup_snapshot_links_org_1_pkey PRIMARY KEY (backup_id, snapshot_data_id);
-
-
---
--- Name: backup_snapshot_links_org_3 backup_snapshot_links_org_3_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_links_org_3
-    ADD CONSTRAINT backup_snapshot_links_org_3_pkey PRIMARY KEY (backup_id, snapshot_data_id);
-
-
---
--- Name: backups backups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: backups backups_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.backups
@@ -1756,7 +1732,7 @@ ALTER TABLE ONLY public.backups
 
 
 --
--- Name: crypto_profiles crypto_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: crypto_profiles crypto_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.crypto_profiles
@@ -1764,7 +1740,7 @@ ALTER TABLE ONLY public.crypto_profiles
 
 
 --
--- Name: device_installed_modules device_installed_modules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: device_installed_modules device_installed_modules_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_installed_modules
@@ -1772,7 +1748,7 @@ ALTER TABLE ONLY public.device_installed_modules
 
 
 --
--- Name: device_latest_status device_latest_status_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: device_latest_status device_latest_status_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_latest_status
@@ -1780,7 +1756,7 @@ ALTER TABLE ONLY public.device_latest_status
 
 
 --
--- Name: device_radios device_radios_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: device_radios device_radios_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_radios
@@ -1788,7 +1764,7 @@ ALTER TABLE ONLY public.device_radios
 
 
 --
--- Name: device_registry device_registry_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: device_registry device_registry_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_registry
@@ -1796,7 +1772,7 @@ ALTER TABLE ONLY public.device_registry
 
 
 --
--- Name: gateways gateways_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: gateways gateways_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gateways
@@ -1804,7 +1780,7 @@ ALTER TABLE ONLY public.gateways
 
 
 --
--- Name: gdpr_deletion_requests gdpr_deletion_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests gdpr_deletion_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gdpr_deletion_requests
@@ -1812,7 +1788,7 @@ ALTER TABLE ONLY public.gdpr_deletion_requests
 
 
 --
--- Name: gdpr_deletion_requests gdr_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests gdr_token_key; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gdpr_deletion_requests
@@ -1820,7 +1796,7 @@ ALTER TABLE ONLY public.gdpr_deletion_requests
 
 
 --
--- Name: mcu_variant_gpio_pins mcu_variant_gpio_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: mcu_variant_gpio_pins mcu_variant_gpio_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.mcu_variant_gpio_pins
@@ -1828,7 +1804,7 @@ ALTER TABLE ONLY public.mcu_variant_gpio_pins
 
 
 --
--- Name: mcu_variants mcu_variants_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: mcu_variants mcu_variants_name_key; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.mcu_variants
@@ -1836,7 +1812,7 @@ ALTER TABLE ONLY public.mcu_variants
 
 
 --
--- Name: mcu_variants mcu_variants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: mcu_variants mcu_variants_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.mcu_variants
@@ -1844,7 +1820,7 @@ ALTER TABLE ONLY public.mcu_variants
 
 
 --
--- Name: module_mcu_compatibility module_mcu_compatibility_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: module_mcu_compatibility module_mcu_compatibility_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.module_mcu_compatibility
@@ -1852,7 +1828,7 @@ ALTER TABLE ONLY public.module_mcu_compatibility
 
 
 --
--- Name: node_template_module_pins node_template_module_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: node_template_module_pins node_template_module_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_template_module_pins
@@ -1860,7 +1836,7 @@ ALTER TABLE ONLY public.node_template_module_pins
 
 
 --
--- Name: node_templates node_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: node_templates node_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_templates
@@ -1868,7 +1844,7 @@ ALTER TABLE ONLY public.node_templates
 
 
 --
--- Name: node_template_module_gpio_pins ntm_gpio_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: node_template_module_gpio_pins ntm_gpio_pins_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_template_module_gpio_pins
@@ -1876,7 +1852,7 @@ ALTER TABLE ONLY public.node_template_module_gpio_pins
 
 
 --
--- Name: org_backup_settings org_backup_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: org_backup_settings org_backup_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.org_backup_settings
@@ -1884,23 +1860,7 @@ ALTER TABLE ONLY public.org_backup_settings
 
 
 --
--- Name: org_event_log_org_1 org_event_log_org_1_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.org_event_log_org_1
-    ADD CONSTRAINT org_event_log_org_1_pkey PRIMARY KEY (event_id);
-
-
---
--- Name: org_event_log_org_3 org_event_log_org_3_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.org_event_log_org_3
-    ADD CONSTRAINT org_event_log_org_3_pkey PRIMARY KEY (event_id);
-
-
---
--- Name: organisations organisations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: organisations organisations_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.organisations
@@ -1908,7 +1868,7 @@ ALTER TABLE ONLY public.organisations
 
 
 --
--- Name: ota_jobs ota_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: ota_jobs ota_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.ota_jobs
@@ -1916,7 +1876,7 @@ ALTER TABLE ONLY public.ota_jobs
 
 
 --
--- Name: role_hierarchy role_hierarchy_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: role_hierarchy role_hierarchy_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.role_hierarchy
@@ -1924,7 +1884,7 @@ ALTER TABLE ONLY public.role_hierarchy
 
 
 --
--- Name: sensor_capabilities sensor_capabilities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: sensor_capabilities sensor_capabilities_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensor_capabilities
@@ -1932,7 +1892,7 @@ ALTER TABLE ONLY public.sensor_capabilities
 
 
 --
--- Name: sensor_data sensor_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: sensor_data sensor_data_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensor_data
@@ -1940,7 +1900,7 @@ ALTER TABLE ONLY public.sensor_data
 
 
 --
--- Name: sensor_module_types sensor_module_types_module_type_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: sensor_module_types sensor_module_types_module_type_key; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensor_module_types
@@ -1948,7 +1908,7 @@ ALTER TABLE ONLY public.sensor_module_types
 
 
 --
--- Name: sensor_module_types sensor_module_types_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: sensor_module_types sensor_module_types_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensor_module_types
@@ -1956,7 +1916,7 @@ ALTER TABLE ONLY public.sensor_module_types
 
 
 --
--- Name: sensors sensors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: sensors sensors_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensors
@@ -1964,7 +1924,7 @@ ALTER TABLE ONLY public.sensors
 
 
 --
--- Name: sites sites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: sites sites_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sites
@@ -1972,7 +1932,15 @@ ALTER TABLE ONLY public.sites
 
 
 --
--- Name: user_site_roles user_site_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: user_auth_methods user_auth_methods_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.user_auth_methods
+    ADD CONSTRAINT user_auth_methods_pkey PRIMARY KEY (auth_id);
+
+
+--
+-- Name: user_site_roles user_site_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.user_site_roles
@@ -1980,7 +1948,7 @@ ALTER TABLE ONLY public.user_site_roles
 
 
 --
--- Name: user_verification_tokens user_verification_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: user_verification_tokens user_verification_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.user_verification_tokens
@@ -1988,7 +1956,7 @@ ALTER TABLE ONLY public.user_verification_tokens
 
 
 --
--- Name: users users_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: users users_email_key; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.users
@@ -1996,7 +1964,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.users
@@ -2004,7 +1972,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: user_verification_tokens uvt_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: user_verification_tokens uvt_token_key; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.user_verification_tokens
@@ -2012,133 +1980,105 @@ ALTER TABLE ONLY public.user_verification_tokens
 
 
 --
--- Name: alert_rules_unique_active_metric; Type: INDEX; Schema: public; Owner: -
+-- Name: alert_rules_unique_active_metric; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
 CREATE UNIQUE INDEX alert_rules_unique_active_metric ON public.alert_rules USING btree (serial_number, metric_name) WHERE (is_active = true);
 
 
 --
--- Name: alert_template_rules_unique_metric; Type: INDEX; Schema: public; Owner: -
+-- Name: alert_template_rules_unique_metric; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
 CREATE UNIQUE INDEX alert_template_rules_unique_metric ON public.alert_template_rules USING btree (alert_template_id, metric_name);
 
 
 --
--- Name: backup_snapshot_data_org_1_hash_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX backup_snapshot_data_org_1_hash_idx ON public.backup_snapshot_data_org_1 USING btree (source_table, row_hash);
-
-
---
--- Name: backup_snapshot_data_org_3_hash_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX backup_snapshot_data_org_3_hash_idx ON public.backup_snapshot_data_org_3 USING btree (source_table, row_hash);
-
-
---
--- Name: backup_snapshot_links_org_1_backup_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX backup_snapshot_links_org_1_backup_idx ON public.backup_snapshot_links_org_1 USING btree (backup_id);
-
-
---
--- Name: backup_snapshot_links_org_3_backup_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX backup_snapshot_links_org_3_backup_idx ON public.backup_snapshot_links_org_3 USING btree (backup_id);
-
-
---
--- Name: gdpr_deletion_requests_one_pending; Type: INDEX; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests_one_pending; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
 CREATE UNIQUE INDEX gdpr_deletion_requests_one_pending ON public.gdpr_deletion_requests USING btree (org_id) WHERE (status = 'pending'::public.gdpr_deletion_status);
 
 
 --
--- Name: mcu_variant_gpio_pins_unique; Type: INDEX; Schema: public; Owner: -
+-- Name: mcu_variant_gpio_pins_unique; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
 CREATE UNIQUE INDEX mcu_variant_gpio_pins_unique ON public.mcu_variant_gpio_pins USING btree (mcu_variant_id, gpio_pin);
 
 
 --
--- Name: node_template_module_pins_unique; Type: INDEX; Schema: public; Owner: -
+-- Name: node_template_module_pins_unique; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
 CREATE UNIQUE INDEX node_template_module_pins_unique ON public.node_template_module_pins USING btree (node_template_id, module_type_id);
 
 
 --
--- Name: ntm_gpio_pins_unique_role; Type: INDEX; Schema: public; Owner: -
+-- Name: ntm_gpio_pins_unique_role; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
 CREATE UNIQUE INDEX ntm_gpio_pins_unique_role ON public.node_template_module_gpio_pins USING btree (node_template_module_pin_id, pin_role);
 
 
 --
--- Name: org_event_log_org_1_type_idx; Type: INDEX; Schema: public; Owner: -
+-- Name: user_auth_methods_unique_method; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
-CREATE INDEX org_event_log_org_1_type_idx ON public.org_event_log_org_1 USING btree (event_type);
-
-
---
--- Name: org_event_log_org_3_type_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX org_event_log_org_3_type_idx ON public.org_event_log_org_3 USING btree (event_type);
+CREATE UNIQUE INDEX user_auth_methods_unique_method ON public.user_auth_methods USING btree (user_id, method_type);
 
 
 --
--- Name: user_site_roles_unique_grant; Type: INDEX; Schema: public; Owner: -
+-- Name: user_auth_methods_unique_provider_sub; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE UNIQUE INDEX user_auth_methods_unique_provider_sub ON public.user_auth_methods USING btree (method_type, provider_sub) WHERE (provider_sub IS NOT NULL);
+
+
+--
+-- Name: user_site_roles_unique_grant; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
 CREATE UNIQUE INDEX user_site_roles_unique_grant ON public.user_site_roles USING btree (user_id, COALESCE(site_id, '-1'::integer));
 
 
 --
--- Name: organisations trg_org_backup_tables_on_insert; Type: TRIGGER; Schema: public; Owner: -
+-- Name: organisations trg_org_backup_tables_on_insert; Type: TRIGGER; Schema: public; Owner: psql_admin
 --
 
 CREATE TRIGGER trg_org_backup_tables_on_insert AFTER INSERT ON public.organisations FOR EACH ROW EXECUTE FUNCTION public.trg_create_org_backup_tables();
 
 
 --
--- Name: organisations trg_org_event_log_on_insert; Type: TRIGGER; Schema: public; Owner: -
+-- Name: organisations trg_org_event_log_on_insert; Type: TRIGGER; Schema: public; Owner: psql_admin
 --
 
 CREATE TRIGGER trg_org_event_log_on_insert AFTER INSERT ON public.organisations FOR EACH ROW EXECUTE FUNCTION public.trg_create_org_event_log();
 
 
 --
--- Name: user_site_roles trg_protect_last_global_admin; Type: TRIGGER; Schema: public; Owner: -
+-- Name: user_site_roles trg_protect_last_global_admin; Type: TRIGGER; Schema: public; Owner: psql_admin
 --
 
 CREATE TRIGGER trg_protect_last_global_admin BEFORE DELETE OR UPDATE ON public.user_site_roles FOR EACH ROW EXECUTE FUNCTION public.protect_last_global_admin();
 
 
 --
--- Name: user_site_roles trg_stamp_granted_at; Type: TRIGGER; Schema: public; Owner: -
+-- Name: user_site_roles trg_stamp_granted_at; Type: TRIGGER; Schema: public; Owner: psql_admin
 --
 
 CREATE TRIGGER trg_stamp_granted_at BEFORE INSERT OR UPDATE ON public.user_site_roles FOR EACH ROW EXECUTE FUNCTION public.stamp_granted_at();
 
 
 --
--- Name: sensor_data trg_upsert_device_latest_status; Type: TRIGGER; Schema: public; Owner: -
+-- Name: sensor_data trg_upsert_device_latest_status; Type: TRIGGER; Schema: public; Owner: psql_admin
 --
 
 CREATE TRIGGER trg_upsert_device_latest_status AFTER INSERT ON public.sensor_data FOR EACH ROW EXECUTE FUNCTION public.upsert_device_latest_status();
 
 
 --
--- Name: alert_rules alert_rules_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: alert_rules alert_rules_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_rules
@@ -2146,7 +2086,7 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
--- Name: alert_rules alert_rules_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: alert_rules alert_rules_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_rules
@@ -2154,7 +2094,7 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
--- Name: alert_templates alert_templates_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: alert_templates alert_templates_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_templates
@@ -2162,7 +2102,7 @@ ALTER TABLE ONLY public.alert_templates
 
 
 --
--- Name: alert_templates alert_templates_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: alert_templates alert_templates_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_templates
@@ -2170,7 +2110,7 @@ ALTER TABLE ONLY public.alert_templates
 
 
 --
--- Name: alerts alerts_acknowledged_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: alerts alerts_acknowledged_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alerts
@@ -2178,7 +2118,7 @@ ALTER TABLE ONLY public.alerts
 
 
 --
--- Name: alerts alerts_alert_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: alerts alerts_alert_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alerts
@@ -2186,7 +2126,7 @@ ALTER TABLE ONLY public.alerts
 
 
 --
--- Name: alerts alerts_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: alerts alerts_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alerts
@@ -2194,7 +2134,7 @@ ALTER TABLE ONLY public.alerts
 
 
 --
--- Name: alert_template_rules atr_alert_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: alert_template_rules atr_alert_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.alert_template_rules
@@ -2202,39 +2142,7 @@ ALTER TABLE ONLY public.alert_template_rules
 
 
 --
--- Name: backup_snapshot_links_org_1 backup_snapshot_links_org_1_backup_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_links_org_1
-    ADD CONSTRAINT backup_snapshot_links_org_1_backup_id_fkey FOREIGN KEY (backup_id) REFERENCES public.backups(backup_id) ON DELETE CASCADE;
-
-
---
--- Name: backup_snapshot_links_org_1 backup_snapshot_links_org_1_snapshot_data_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_links_org_1
-    ADD CONSTRAINT backup_snapshot_links_org_1_snapshot_data_id_fkey FOREIGN KEY (snapshot_data_id) REFERENCES public.backup_snapshot_data_org_1(snapshot_data_id) ON DELETE CASCADE;
-
-
---
--- Name: backup_snapshot_links_org_3 backup_snapshot_links_org_3_backup_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_links_org_3
-    ADD CONSTRAINT backup_snapshot_links_org_3_backup_id_fkey FOREIGN KEY (backup_id) REFERENCES public.backups(backup_id) ON DELETE CASCADE;
-
-
---
--- Name: backup_snapshot_links_org_3 backup_snapshot_links_org_3_snapshot_data_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.backup_snapshot_links_org_3
-    ADD CONSTRAINT backup_snapshot_links_org_3_snapshot_data_id_fkey FOREIGN KEY (snapshot_data_id) REFERENCES public.backup_snapshot_data_org_3(snapshot_data_id) ON DELETE CASCADE;
-
-
---
--- Name: backups backups_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: backups backups_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.backups
@@ -2242,7 +2150,7 @@ ALTER TABLE ONLY public.backups
 
 
 --
--- Name: backups backups_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: backups backups_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.backups
@@ -2250,7 +2158,7 @@ ALTER TABLE ONLY public.backups
 
 
 --
--- Name: crypto_profiles crypto_profiles_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: crypto_profiles crypto_profiles_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.crypto_profiles
@@ -2258,7 +2166,7 @@ ALTER TABLE ONLY public.crypto_profiles
 
 
 --
--- Name: crypto_profiles crypto_profiles_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: crypto_profiles crypto_profiles_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.crypto_profiles
@@ -2266,7 +2174,7 @@ ALTER TABLE ONLY public.crypto_profiles
 
 
 --
--- Name: device_installed_modules device_installed_modules_module_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: device_installed_modules device_installed_modules_module_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_installed_modules
@@ -2274,7 +2182,7 @@ ALTER TABLE ONLY public.device_installed_modules
 
 
 --
--- Name: device_installed_modules device_installed_modules_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: device_installed_modules device_installed_modules_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_installed_modules
@@ -2282,7 +2190,7 @@ ALTER TABLE ONLY public.device_installed_modules
 
 
 --
--- Name: device_radios device_radios_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: device_radios device_radios_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_radios
@@ -2290,7 +2198,7 @@ ALTER TABLE ONLY public.device_radios
 
 
 --
--- Name: device_registry device_registry_mcu_variant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: device_registry device_registry_mcu_variant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.device_registry
@@ -2298,7 +2206,7 @@ ALTER TABLE ONLY public.device_registry
 
 
 --
--- Name: gateways gateways_crypto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: gateways gateways_crypto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gateways
@@ -2306,7 +2214,7 @@ ALTER TABLE ONLY public.gateways
 
 
 --
--- Name: gateways gateways_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: gateways gateways_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gateways
@@ -2314,7 +2222,7 @@ ALTER TABLE ONLY public.gateways
 
 
 --
--- Name: gateways gateways_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: gateways gateways_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gateways
@@ -2322,7 +2230,7 @@ ALTER TABLE ONLY public.gateways
 
 
 --
--- Name: gateways gateways_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: gateways gateways_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gateways
@@ -2330,7 +2238,7 @@ ALTER TABLE ONLY public.gateways
 
 
 --
--- Name: gateways gateways_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: gateways gateways_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gateways
@@ -2338,7 +2246,7 @@ ALTER TABLE ONLY public.gateways
 
 
 --
--- Name: gdpr_deletion_requests gdr_cancelled_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests gdr_cancelled_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gdpr_deletion_requests
@@ -2346,7 +2254,7 @@ ALTER TABLE ONLY public.gdpr_deletion_requests
 
 
 --
--- Name: gdpr_deletion_requests gdr_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests gdr_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gdpr_deletion_requests
@@ -2354,7 +2262,7 @@ ALTER TABLE ONLY public.gdpr_deletion_requests
 
 
 --
--- Name: gdpr_deletion_requests gdr_requested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: gdpr_deletion_requests gdr_requested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.gdpr_deletion_requests
@@ -2362,7 +2270,7 @@ ALTER TABLE ONLY public.gdpr_deletion_requests
 
 
 --
--- Name: module_mcu_compatibility module_mcu_compatibility_mcu_variant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: module_mcu_compatibility module_mcu_compatibility_mcu_variant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.module_mcu_compatibility
@@ -2370,7 +2278,7 @@ ALTER TABLE ONLY public.module_mcu_compatibility
 
 
 --
--- Name: module_mcu_compatibility module_mcu_compatibility_module_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: module_mcu_compatibility module_mcu_compatibility_module_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.module_mcu_compatibility
@@ -2378,7 +2286,7 @@ ALTER TABLE ONLY public.module_mcu_compatibility
 
 
 --
--- Name: mcu_variant_gpio_pins mvgp_mcu_variant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: mcu_variant_gpio_pins mvgp_mcu_variant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.mcu_variant_gpio_pins
@@ -2386,7 +2294,7 @@ ALTER TABLE ONLY public.mcu_variant_gpio_pins
 
 
 --
--- Name: node_templates node_templates_alert_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_templates node_templates_alert_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_templates
@@ -2394,7 +2302,7 @@ ALTER TABLE ONLY public.node_templates
 
 
 --
--- Name: node_templates node_templates_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_templates node_templates_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_templates
@@ -2402,7 +2310,7 @@ ALTER TABLE ONLY public.node_templates
 
 
 --
--- Name: node_templates node_templates_mcu_variant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_templates node_templates_mcu_variant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_templates
@@ -2410,7 +2318,7 @@ ALTER TABLE ONLY public.node_templates
 
 
 --
--- Name: node_templates node_templates_mesh_crypto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_templates node_templates_mesh_crypto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_templates
@@ -2418,7 +2326,7 @@ ALTER TABLE ONLY public.node_templates
 
 
 --
--- Name: node_templates node_templates_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_templates node_templates_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_templates
@@ -2426,7 +2334,7 @@ ALTER TABLE ONLY public.node_templates
 
 
 --
--- Name: node_templates node_templates_packet_crypto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_templates node_templates_packet_crypto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_templates
@@ -2434,7 +2342,7 @@ ALTER TABLE ONLY public.node_templates
 
 
 --
--- Name: node_templates node_templates_wlan_crypto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_templates node_templates_wlan_crypto_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_templates
@@ -2442,7 +2350,7 @@ ALTER TABLE ONLY public.node_templates
 
 
 --
--- Name: node_template_module_gpio_pins ntm_gpio_pins_pin_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_template_module_gpio_pins ntm_gpio_pins_pin_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_template_module_gpio_pins
@@ -2450,7 +2358,7 @@ ALTER TABLE ONLY public.node_template_module_gpio_pins
 
 
 --
--- Name: node_template_module_pins ntmp_module_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_template_module_pins ntmp_module_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_template_module_pins
@@ -2458,7 +2366,7 @@ ALTER TABLE ONLY public.node_template_module_pins
 
 
 --
--- Name: node_template_module_pins ntmp_node_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: node_template_module_pins ntmp_node_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.node_template_module_pins
@@ -2466,7 +2374,7 @@ ALTER TABLE ONLY public.node_template_module_pins
 
 
 --
--- Name: org_backup_settings obs_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: org_backup_settings obs_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.org_backup_settings
@@ -2474,7 +2382,7 @@ ALTER TABLE ONLY public.org_backup_settings
 
 
 --
--- Name: org_backup_settings obs_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: org_backup_settings obs_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.org_backup_settings
@@ -2482,7 +2390,7 @@ ALTER TABLE ONLY public.org_backup_settings
 
 
 --
--- Name: sensor_capabilities sensor_capabilities_sensor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: sensor_capabilities sensor_capabilities_sensor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensor_capabilities
@@ -2490,7 +2398,7 @@ ALTER TABLE ONLY public.sensor_capabilities
 
 
 --
--- Name: sensors sensors_gateway_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: sensors sensors_gateway_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensors
@@ -2498,7 +2406,7 @@ ALTER TABLE ONLY public.sensors
 
 
 --
--- Name: sensors sensors_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: sensors sensors_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensors
@@ -2506,7 +2414,7 @@ ALTER TABLE ONLY public.sensors
 
 
 --
--- Name: sensors sensors_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: sensors sensors_serial_number_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensors
@@ -2514,7 +2422,7 @@ ALTER TABLE ONLY public.sensors
 
 
 --
--- Name: sensors sensors_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: sensors sensors_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sensors
@@ -2522,7 +2430,7 @@ ALTER TABLE ONLY public.sensors
 
 
 --
--- Name: sites sites_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: sites sites_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.sites
@@ -2530,7 +2438,15 @@ ALTER TABLE ONLY public.sites
 
 
 --
--- Name: user_site_roles user_site_roles_granted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: user_auth_methods user_auth_methods_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.user_auth_methods
+    ADD CONSTRAINT user_auth_methods_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_site_roles user_site_roles_granted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.user_site_roles
@@ -2538,7 +2454,7 @@ ALTER TABLE ONLY public.user_site_roles
 
 
 --
--- Name: user_site_roles user_site_roles_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: user_site_roles user_site_roles_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.user_site_roles
@@ -2546,7 +2462,7 @@ ALTER TABLE ONLY public.user_site_roles
 
 
 --
--- Name: user_site_roles user_site_roles_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: user_site_roles user_site_roles_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.user_site_roles
@@ -2554,7 +2470,7 @@ ALTER TABLE ONLY public.user_site_roles
 
 
 --
--- Name: users users_locked_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: users users_locked_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.users
@@ -2562,7 +2478,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: users users_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: users users_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.users
@@ -2570,7 +2486,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: users users_suspended_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: users users_suspended_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.users
@@ -2578,7 +2494,7 @@ ALTER TABLE ONLY public.users
 
 
 --
--- Name: user_verification_tokens uvt_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: user_verification_tokens uvt_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
 ALTER TABLE ONLY public.user_verification_tokens
@@ -2589,5 +2505,5 @@ ALTER TABLE ONLY public.user_verification_tokens
 -- PostgreSQL database dump complete
 --
 
-\unrestrict dkaPd0TjPMvCDxhon3TlFYzM5r1SjSQB0HHOHdTmxgpuQUfKSKWCCTYNde4ErAj
+\unrestrict lQHbhG0DJ7MDWVgL1wRMWfkL9Ic9TQmtL6Hm5Kj1HU7ojDfSOa7ovrgOjhdLggM
 
