@@ -13,6 +13,10 @@ from db_helpers import get_sensors_and_capabilities_for_gateway
 
 app = FastAPI()
 
+## note, full database scheme is located in repo /db/schema.sql 
+## Public GitHub raw link for /db/schema.sql: https://raw.githubusercontent.com/chriskaye/WatchDogWeb/refs/heads/main/db/schema.sql
+## Public Github raw link for /api/db_helpers: https://raw.githubusercontent.com/chriskaye/WatchDogWeb/refs/heads/main/api/db_helpers.py
+
 # --- Auth setup ---
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:8501")
 SECRET_KEY = os.getenv("SECRET_KEY", "CHANGE_THIS_SECRET")
