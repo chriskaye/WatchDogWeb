@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 0Vktuccqyo0H4bv1Uasoyxb8H0t4Qhp7bFcIBSecytYL8ZB3H4vHbkmzvPkS7V4
+\restrict DfaUNTeRwWiDVHPTeoLx7GCVqNMFfakrCDxw6MwUfjyw7mD9tgDxkVZPKuibs2P
 
 -- Dumped from database version 18.4 (Debian 18.4-1.pgdg13+1)
 -- Dumped by pg_dump version 18.4 (Debian 18.4-1.pgdg13+1)
@@ -120,8 +120,7 @@ CREATE TYPE public.site_role AS ENUM (
     'site_admin',
     'global_viewer',
     'site_viewer',
-    'no_access',
-    'watchdog_admin'
+    'no_access'
 );
 
 
@@ -612,6 +611,54 @@ ALTER SEQUENCE public.alerts_id_seq OWNED BY public.alerts.alert_id;
 
 
 --
+-- Name: backup_snapshot_data_org_1; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.backup_snapshot_data_org_1 (
+    snapshot_data_id bigint NOT NULL,
+    source_table text NOT NULL,
+    row_hash text NOT NULL,
+    row_data jsonb NOT NULL,
+    first_seen_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.backup_snapshot_data_org_1 OWNER TO psql_admin;
+
+--
+-- Name: backup_snapshot_data_org_1_snapshot_data_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.backup_snapshot_data_org_1_snapshot_data_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.backup_snapshot_data_org_1_snapshot_data_id_seq OWNER TO psql_admin;
+
+--
+-- Name: backup_snapshot_data_org_1_snapshot_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.backup_snapshot_data_org_1_snapshot_data_id_seq OWNED BY public.backup_snapshot_data_org_1.snapshot_data_id;
+
+
+--
+-- Name: backup_snapshot_links_org_1; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.backup_snapshot_links_org_1 (
+    backup_id integer NOT NULL,
+    snapshot_data_id bigint NOT NULL
+);
+
+
+ALTER TABLE public.backup_snapshot_links_org_1 OWNER TO psql_admin;
+
+--
 -- Name: backups; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
@@ -1095,6 +1142,44 @@ CREATE TABLE public.org_backup_settings (
 ALTER TABLE public.org_backup_settings OWNER TO psql_admin;
 
 --
+-- Name: org_event_log_org_1; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.org_event_log_org_1 (
+    event_id bigint NOT NULL,
+    event_type text NOT NULL,
+    actor_user_id integer,
+    target_type text NOT NULL,
+    target_id text,
+    details jsonb,
+    created_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.org_event_log_org_1 OWNER TO psql_admin;
+
+--
+-- Name: org_event_log_org_1_event_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.org_event_log_org_1_event_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.org_event_log_org_1_event_id_seq OWNER TO psql_admin;
+
+--
+-- Name: org_event_log_org_1_event_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.org_event_log_org_1_event_id_seq OWNED BY public.org_event_log_org_1.event_id;
+
+
+--
 -- Name: organisations; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
@@ -1363,6 +1448,81 @@ ALTER SEQUENCE public.sites_site_id_seq OWNED BY public.sites.site_id;
 
 
 --
+-- Name: support_access_grants; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.support_access_grants (
+    grant_id integer NOT NULL,
+    user_id integer NOT NULL,
+    granted_at timestamp without time zone DEFAULT now(),
+    expires_at timestamp without time zone NOT NULL,
+    revoked_at timestamp without time zone
+);
+
+
+ALTER TABLE public.support_access_grants OWNER TO psql_admin;
+
+--
+-- Name: support_access_grants_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.support_access_grants_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.support_access_grants_id_seq OWNER TO psql_admin;
+
+--
+-- Name: support_access_grants_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.support_access_grants_id_seq OWNED BY public.support_access_grants.grant_id;
+
+
+--
+-- Name: support_access_sessions; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.support_access_sessions (
+    session_id integer NOT NULL,
+    grant_id integer NOT NULL,
+    admin_user_id integer NOT NULL,
+    target_user_id integer NOT NULL,
+    started_at timestamp without time zone DEFAULT now(),
+    ended_at timestamp without time zone
+);
+
+
+ALTER TABLE public.support_access_sessions OWNER TO psql_admin;
+
+--
+-- Name: support_access_sessions_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.support_access_sessions_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.support_access_sessions_id_seq OWNER TO psql_admin;
+
+--
+-- Name: support_access_sessions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.support_access_sessions_id_seq OWNED BY public.support_access_sessions.session_id;
+
+
+--
 -- Name: user_auth_methods; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
@@ -1498,7 +1658,8 @@ CREATE TABLE public.users (
     suspended_at timestamp without time zone,
     suspended_by integer,
     suspend_reason text,
-    sessions_invalidated_at timestamp without time zone
+    sessions_invalidated_at timestamp without time zone,
+    is_watchdog_admin boolean DEFAULT false NOT NULL
 );
 
 
@@ -1552,6 +1713,13 @@ ALTER TABLE ONLY public.alert_templates ALTER COLUMN alert_template_id SET DEFAU
 --
 
 ALTER TABLE ONLY public.alerts ALTER COLUMN alert_id SET DEFAULT nextval('public.alerts_id_seq'::regclass);
+
+
+--
+-- Name: backup_snapshot_data_org_1 snapshot_data_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_data_org_1 ALTER COLUMN snapshot_data_id SET DEFAULT nextval('public.backup_snapshot_data_org_1_snapshot_data_id_seq'::regclass);
 
 
 --
@@ -1625,6 +1793,13 @@ ALTER TABLE ONLY public.node_templates ALTER COLUMN node_template_id SET DEFAULT
 
 
 --
+-- Name: org_event_log_org_1 event_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.org_event_log_org_1 ALTER COLUMN event_id SET DEFAULT nextval('public.org_event_log_org_1_event_id_seq'::regclass);
+
+
+--
 -- Name: organisations org_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
@@ -1664,6 +1839,20 @@ ALTER TABLE ONLY public.sensor_module_types ALTER COLUMN module_type_id SET DEFA
 --
 
 ALTER TABLE ONLY public.sites ALTER COLUMN site_id SET DEFAULT nextval('public.sites_site_id_seq'::regclass);
+
+
+--
+-- Name: support_access_grants grant_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.support_access_grants ALTER COLUMN grant_id SET DEFAULT nextval('public.support_access_grants_id_seq'::regclass);
+
+
+--
+-- Name: support_access_sessions session_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.support_access_sessions ALTER COLUMN session_id SET DEFAULT nextval('public.support_access_sessions_id_seq'::regclass);
 
 
 --
@@ -1724,6 +1913,22 @@ ALTER TABLE ONLY public.alert_templates
 
 ALTER TABLE ONLY public.alerts
     ADD CONSTRAINT alerts_pkey PRIMARY KEY (alert_id);
+
+
+--
+-- Name: backup_snapshot_data_org_1 backup_snapshot_data_org_1_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_data_org_1
+    ADD CONSTRAINT backup_snapshot_data_org_1_pkey PRIMARY KEY (snapshot_data_id);
+
+
+--
+-- Name: backup_snapshot_links_org_1 backup_snapshot_links_org_1_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_links_org_1
+    ADD CONSTRAINT backup_snapshot_links_org_1_pkey PRIMARY KEY (backup_id, snapshot_data_id);
 
 
 --
@@ -1863,6 +2068,14 @@ ALTER TABLE ONLY public.org_backup_settings
 
 
 --
+-- Name: org_event_log_org_1 org_event_log_org_1_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.org_event_log_org_1
+    ADD CONSTRAINT org_event_log_org_1_pkey PRIMARY KEY (event_id);
+
+
+--
 -- Name: organisations organisations_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
@@ -1935,6 +2148,22 @@ ALTER TABLE ONLY public.sites
 
 
 --
+-- Name: support_access_grants support_access_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.support_access_grants
+    ADD CONSTRAINT support_access_grants_pkey PRIMARY KEY (grant_id);
+
+
+--
+-- Name: support_access_sessions support_access_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.support_access_sessions
+    ADD CONSTRAINT support_access_sessions_pkey PRIMARY KEY (session_id);
+
+
+--
 -- Name: user_auth_methods user_auth_methods_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
@@ -1997,6 +2226,20 @@ CREATE UNIQUE INDEX alert_template_rules_unique_metric ON public.alert_template_
 
 
 --
+-- Name: backup_snapshot_data_org_1_hash_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE UNIQUE INDEX backup_snapshot_data_org_1_hash_idx ON public.backup_snapshot_data_org_1 USING btree (source_table, row_hash);
+
+
+--
+-- Name: backup_snapshot_links_org_1_backup_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX backup_snapshot_links_org_1_backup_idx ON public.backup_snapshot_links_org_1 USING btree (backup_id);
+
+
+--
 -- Name: gdpr_deletion_requests_one_pending; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
@@ -2022,6 +2265,48 @@ CREATE UNIQUE INDEX node_template_module_pins_unique ON public.node_template_mod
 --
 
 CREATE UNIQUE INDEX ntm_gpio_pins_unique_role ON public.node_template_module_gpio_pins USING btree (node_template_module_pin_id, pin_role);
+
+
+--
+-- Name: org_event_log_org_1_type_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX org_event_log_org_1_type_idx ON public.org_event_log_org_1 USING btree (event_type);
+
+
+--
+-- Name: support_access_grants_expires_at_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX support_access_grants_expires_at_idx ON public.support_access_grants USING btree (expires_at);
+
+
+--
+-- Name: support_access_grants_user_id_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX support_access_grants_user_id_idx ON public.support_access_grants USING btree (user_id);
+
+
+--
+-- Name: support_access_sessions_admin_user_id_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX support_access_sessions_admin_user_id_idx ON public.support_access_sessions USING btree (admin_user_id);
+
+
+--
+-- Name: support_access_sessions_grant_id_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX support_access_sessions_grant_id_idx ON public.support_access_sessions USING btree (grant_id);
+
+
+--
+-- Name: support_access_sessions_target_user_id_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX support_access_sessions_target_user_id_idx ON public.support_access_sessions USING btree (target_user_id);
 
 
 --
@@ -2142,6 +2427,22 @@ ALTER TABLE ONLY public.alerts
 
 ALTER TABLE ONLY public.alert_template_rules
     ADD CONSTRAINT atr_alert_template_id_fkey FOREIGN KEY (alert_template_id) REFERENCES public.alert_templates(alert_template_id) ON DELETE CASCADE;
+
+
+--
+-- Name: backup_snapshot_links_org_1 backup_snapshot_links_org_1_backup_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_links_org_1
+    ADD CONSTRAINT backup_snapshot_links_org_1_backup_id_fkey FOREIGN KEY (backup_id) REFERENCES public.backups(backup_id) ON DELETE CASCADE;
+
+
+--
+-- Name: backup_snapshot_links_org_1 backup_snapshot_links_org_1_snapshot_data_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_links_org_1
+    ADD CONSTRAINT backup_snapshot_links_org_1_snapshot_data_id_fkey FOREIGN KEY (snapshot_data_id) REFERENCES public.backup_snapshot_data_org_1(snapshot_data_id) ON DELETE CASCADE;
 
 
 --
@@ -2393,6 +2694,38 @@ ALTER TABLE ONLY public.org_backup_settings
 
 
 --
+-- Name: support_access_grants sag_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.support_access_grants
+    ADD CONSTRAINT sag_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_access_sessions sas_admin_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.support_access_sessions
+    ADD CONSTRAINT sas_admin_user_id_fkey FOREIGN KEY (admin_user_id) REFERENCES public.users(user_id);
+
+
+--
+-- Name: support_access_sessions sas_grant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.support_access_sessions
+    ADD CONSTRAINT sas_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.support_access_grants(grant_id) ON DELETE CASCADE;
+
+
+--
+-- Name: support_access_sessions sas_target_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.support_access_sessions
+    ADD CONSTRAINT sas_target_user_id_fkey FOREIGN KEY (target_user_id) REFERENCES public.users(user_id);
+
+
+--
 -- Name: sensor_capabilities sensor_capabilities_sensor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
@@ -2508,5 +2841,5 @@ ALTER TABLE ONLY public.user_verification_tokens
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 0Vktuccqyo0H4bv1Uasoyxb8H0t4Qhp7bFcIBSecytYL8ZB3H4vHbkmzvPkS7V4
+\unrestrict DfaUNTeRwWiDVHPTeoLx7GCVqNMFfakrCDxw6MwUfjyw7mD9tgDxkVZPKuibs2P
 

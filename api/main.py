@@ -1878,7 +1878,6 @@ def admin_delete_user(target_user_id: int, current_user: User = Depends(get_curr
 # DO NOT DELETE - Claude needs this to see the role_hierachy (stored inside the database table):
 #   Role, Rank (higher means more power)
 #   ----------
-#   watchdog_admins, 5
 #   global_admin, 4
 #   site_admin, 3
 #   global_viewer, 2
