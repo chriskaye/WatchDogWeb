@@ -760,6 +760,57 @@ def invite_user(data: InviteUser, current_user: User = Depends(get_current_user)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+@app.get("/users/me/roles")
+def get_my_roles(current_user: User = Depends(get_current_user)):
+    """Frontend needs this to decide what to render — there was no way to know the
+    logged-in user's role(s) after User dropped its flat `role` field for the site-scoped
+    model. Returns the global (org-wide) role if any, plus every site-scoped role held."""
+    conn = get_db(); cur = conn.cursor()
+    global_role = get_global_role(cur, current_user.user_id)
+    cur.execute("SELECT site_id, role FROM user_site_roles WHERE user_id = %s AND site_id IS NOT NULL;", (current_user.user_id,))
+    site_roles = [{"site_id": r[0], "role": r[1]} for r in cur.fetchall()]
+    cur.close(); conn.close()
+    return {"global_role": global_role, "site_roles": site_roles}
+
+@app.get("/users")
+def list_org_users(current_user: User = Depends(get_current_user)):
+    """Org roster for the Users & Groups page. Global-role users (admin or viewer) see
+    everyone in the org; site-scoped users only see people who share a site with them."""
+    conn = get_db(); cur = conn.cursor()
+    if get_global_role(cur, current_user.user_id):
+        cur.execute(
+            "SELECT user_id, email, is_verified, is_locked, is_suspended FROM users WHERE org_id = %s ORDER BY email;",
+            (current_user.org_id,),
+        )
+        rows = cur.fetchall()
+    else:
+        my_sites = get_user_site_ids(cur, current_user.user_id)
+        if not my_sites:
+            cur.close(); conn.close()
+            return {"users": []}
+        cur.execute(
+            """
+            SELECT DISTINCT u.user_id, u.email, u.is_verified, u.is_locked, u.is_suspended
+            FROM users u JOIN user_site_roles usr ON usr.user_id = u.user_id
+            WHERE u.org_id = %s AND usr.site_id = ANY(%s) ORDER BY u.email;
+            """,
+            (current_user.org_id, my_sites),
+        )
+        rows = cur.fetchall()
+
+    result = []
+    for uid, email, is_verified, is_locked, is_suspended in rows:
+        global_role = get_global_role(cur, uid)
+        cur.execute("SELECT site_id, role FROM user_site_roles WHERE user_id = %s AND site_id IS NOT NULL;", (uid,))
+        site_roles = [{"site_id": r[0], "role": r[1]} for r in cur.fetchall()]
+        result.append({
+            "user_id": uid, "email": email, "is_verified": is_verified,
+            "is_locked": is_locked, "is_suspended": is_suspended,
+            "global_role": global_role, "site_roles": site_roles,
+        })
+    cur.close(); conn.close()
+    return {"users": result}
+
 @app.get("/users/me/auth-methods") # list log-in methods for logged-in user
 def list_auth_methods(current_user: User = Depends(get_current_user)):
     conn = get_db()
@@ -966,6 +1017,67 @@ def register_sensor(data: SensorRegistration, current_user: User = Depends(get_c
     conn.close()
 
     return {"status": "sensor_registered", "sensor_id": data.sensor_id}
+
+def _accessible_site_ids_or_none(cur, current_user: User, site_id_filter: int | None):
+    """Returns None if the user has a global role (see everything), otherwise the list of
+    site_ids they may see (intersected with an explicit ?site_id= filter if given)."""
+    if get_global_role(cur, current_user.user_id):
+        return None if site_id_filter is None else [site_id_filter]
+    accessible = get_user_site_ids(cur, current_user.user_id)
+    if site_id_filter is not None:
+        if site_id_filter not in accessible:
+            raise HTTPException(status_code=403, detail="No access to this site")
+        return [site_id_filter]
+    return accessible
+
+@app.get("/gateways")
+def list_gateways(site_id: int | None = None, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    site_ids = _accessible_site_ids_or_none(cur, current_user, site_id)
+    if site_ids is None:
+        cur.execute(
+            "SELECT gateway_id, name, site_id, firmware_version, serial_number, is_active FROM gateways WHERE org_id = %s ORDER BY name;",
+            (current_user.org_id,),
+        )
+    elif not site_ids:
+        cur.close(); conn.close()
+        return {"gateways": []}
+    else:
+        cur.execute(
+            "SELECT gateway_id, name, site_id, firmware_version, serial_number, is_active FROM gateways WHERE org_id = %s AND site_id = ANY(%s) ORDER BY name;",
+            (current_user.org_id, site_ids),
+        )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"gateways": [
+        {"gateway_id": r[0], "name": r[1], "site_id": r[2], "firmware_version": r[3], "serial_number": r[4], "is_active": r[5]}
+        for r in rows
+    ]}
+
+@app.get("/sensors")
+def list_sensors(site_id: int | None = None, gateway_id: str | None = None, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    site_ids = _accessible_site_ids_or_none(cur, current_user, site_id)
+    base_query = "SELECT sensor_id, name, gateway_id, site_id, location, firmware_version, serial_number, is_active FROM sensors WHERE org_id = %s"
+    params = [current_user.org_id]
+    if site_ids is not None:
+        if not site_ids:
+            cur.close(); conn.close()
+            return {"sensors": []}
+        base_query += " AND site_id = ANY(%s)"
+        params.append(site_ids)
+    if gateway_id is not None:
+        base_query += " AND gateway_id = %s"
+        params.append(gateway_id)
+    base_query += " ORDER BY name;"
+    cur.execute(base_query, params)
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"sensors": [
+        {"sensor_id": r[0], "name": r[1], "gateway_id": r[2], "site_id": r[3], "location": r[4],
+         "firmware_version": r[5], "serial_number": r[6], "is_active": r[7]}
+        for r in rows
+    ]}
 
 @app.post("/gateways/soft_delete")
 def soft_delete_gateway(data: SoftDeleteGateway):
@@ -1274,8 +1386,20 @@ def activate_device(data: ProvisionDevice, current_user: User = Depends(get_curr
         raise HTTPException(status_code=404, detail="Serial number not found in device registry")
     device_type, is_provisioned = row
     if is_provisioned:
+        existing = get_device_org_and_site(cur, data.serial_number)
+        same_org = existing is not None and existing[0] == current_user.org_id
         cur.close(); conn.close()
-        raise HTTPException(status_code=400, detail="Device has already been provisioned")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "already_provisioned",
+                "message": "Node serial number already exists, please deprovision it (delete it) and try again.",
+                "same_org": same_org,
+                # same_org=False is the "possible theft" signal per your instruction — the
+                # device is provisioned somewhere, but not in the caller's own org. We don't
+                # reveal which org it belongs to, just that it isn't this one.
+            },
+        )
 
     device_id = data.serial_number  # see assumption note above
 
@@ -1344,6 +1468,61 @@ def activate_device(data: ProvisionDevice, current_user: User = Depends(get_curr
     cur.close()
     conn.close()
     return {"status": "provisioned", "serial_number": data.serial_number, "device_type": device_type}
+
+@app.get("/provisioning/check")
+def check_device(serial_number: str, current_user: User = Depends(get_current_user)):
+    """Read-only pre-flight check for the QR-scan/manual-provisioning form, so the
+    frontend can show a useful message BEFORE committing to /provisioning/activate
+    (which mutates). Doesn't require org/site access to the device — checking a serial
+    doesn't touch anything, it's the same "is this legit or possibly stolen" question a
+    person scanning a found/purchased device needs answered regardless of role."""
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT device_type, is_provisioned FROM device_registry WHERE serial_number = %s;", (serial_number,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        return {"status": "not_found"}
+    device_type, is_provisioned = row
+    if not is_provisioned:
+        cur.close(); conn.close()
+        return {"status": "available", "device_type": device_type}
+    existing = get_device_org_and_site(cur, serial_number)
+    same_org = existing is not None and existing[0] == current_user.org_id
+    cur.close(); conn.close()
+    return {"status": "already_provisioned", "device_type": device_type, "same_org": same_org}
+
+@app.post("/devices/{serial_number}/deprovision")
+def deprovision_device(serial_number: str, current_user: User = Depends(get_current_user)):
+    """The other half of the "already provisioned" error message — lets an admin actually
+    act on it for a legitimate redeployment. Deactivates the gateway/sensor row and clears
+    device_registry.is_provisioned so the serial becomes available to /provisioning/activate
+    again (a fresh activation will overwrite org_id/site_id via its ON CONFLICT DO UPDATE).
+    Logged, since this is exactly the kind of action worth an audit trail if a device
+    later turns out to have been stolen rather than legitimately redeployed."""
+    conn = get_db(); cur = conn.cursor()
+    device = get_device_org_and_site(cur, serial_number)
+    if not device:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found or not currently provisioned")
+    device_org_id, device_site_id = device
+    require_device_admin(cur, current_user, device_org_id, device_site_id)
+
+    cur.execute("SELECT device_type FROM device_registry WHERE serial_number = %s;", (serial_number,))
+    reg_row = cur.fetchone()
+    device_type = reg_row[0] if reg_row else None
+    if device_type == "gateway":
+        cur.execute("UPDATE gateways SET is_active = FALSE WHERE gateway_id = %s;", (serial_number,))
+    elif device_type == "sensor":
+        cur.execute("UPDATE sensors SET is_active = FALSE WHERE sensor_id = %s;", (serial_number,))
+
+    cur.execute(
+        "UPDATE device_registry SET is_provisioned = FALSE, provisioned_at = NULL WHERE serial_number = %s;",
+        (serial_number,),
+    )
+    log_event(cur, device_org_id, "device_deprovisioned", current_user.user_id,
+              device_type or "device", serial_number, {"previous_site_id": device_site_id})
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "deprovisioned", "serial_number": serial_number}
 
 # Batch QR-photo import (deferred per outstanding-tasks doc — not building this pass).
 
