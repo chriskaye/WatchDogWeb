@@ -10,6 +10,13 @@ class ApiError(Exception):
         self.detail = detail
         self.status_code = status_code
 
+    @property
+    def is_support_session_expired(self) -> bool:
+        """A support_token whose grant/session has ended returns 401 with a distinct
+        message. Recovery is different from a normal expired login: send the admin
+        back to the grants list, not to the login page."""
+        return self.status_code == 401 and "Support Access session" in self.detail
+
 
 def _handle(resp: requests.Response) -> dict:
     if resp.status_code >= 400:

@@ -1,9 +1,9 @@
 import streamlit as st
+from session import init_session_state
 
 st.set_page_config(page_title="WatchDog", page_icon="assets/favicon.ico")
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+init_session_state()
 
 # ---------- LOGGED-OUT NAVIGATION ----------
 landing_page = st.Page("screens/landing.py", title="WatchDog", default=True)

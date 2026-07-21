@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
+from session import do_logout
 
 st.set_page_config(page_title="Dashboard", page_icon="favicon.ico", layout="wide")
 
@@ -10,11 +11,7 @@ accent = "#00e5ff" if theme == "watchdog" else "#ff9800"
 
 if st.session_state.get("logged_in"):
     st.sidebar.title("Menu")
-    st.sidebar.button("Log Out", on_click=lambda: st.session_state.auth.update({
-        "is_authenticated": False,
-        "user": None,
-        "token": None,
-    }))
+    st.sidebar.button("Log Out", on_click=do_logout)
 
 
 st.markdown(f"## Dashboard ({'WatchDog' if theme == 'watchdog' else 'SensorDog'})")
