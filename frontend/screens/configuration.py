@@ -9,14 +9,8 @@ if st.session_state.get("logged_in"):
 
 st.markdown("## Configuration")
 
-st.markdown("### Gateways")
-st.text_input("Gateway URL", value="mqtt://broker.local:1883")
-st.text_input("API Base URL", value="http://localhost:8000")
-
-st.markdown("---")
-st.markdown("### Sensor Provisioning")
-
-sensor_name = st.text_input("Sensor Name")
-sensor_type = st.selectbox("Sensor Type", ["Temperature", "Humidity", "Pressure", "Custom"])
-if st.button("Register Sensor"):
-    st.success(f"Sensor '{sensor_name}' registered as {sensor_type} (placeholder).")
+st.info(
+    "Device inventory and provisioning is being rebuilt against the real API "
+    "(gateways, sensors, and node templates) — the previous version of this page "
+    "was placeholder content not wired to anything. Coming shortly."
+)

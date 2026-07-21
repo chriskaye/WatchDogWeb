@@ -31,7 +31,7 @@ st.markdown("### Live Metrics")
 # Placeholder chart
 data = pd.DataFrame(
     {
-        "time": pd.date_range("2026-07-16", periods=20, freq="T"),
+        "time": pd.date_range("2026-07-16", periods=20, freq="min"),
         "value": np.random.randn(20).cumsum(),
     }
 )
