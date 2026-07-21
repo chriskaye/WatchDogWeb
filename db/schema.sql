@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict lQHbhG0DJ7MDWVgL1wRMWfkL9Ic9TQmtL6Hm5Kj1HU7ojDfSOa7ovrgOjhdLggM
+\restrict 0Vktuccqyo0H4bv1Uasoyxb8H0t4Qhp7bFcIBSecytYL8ZB3H4vHbkmzvPkS7V4
 
 -- Dumped from database version 18.4 (Debian 18.4-1.pgdg13+1)
 -- Dumped by pg_dump version 18.4 (Debian 18.4-1.pgdg13+1)
@@ -120,7 +120,8 @@ CREATE TYPE public.site_role AS ENUM (
     'site_admin',
     'global_viewer',
     'site_viewer',
-    'no_access'
+    'no_access',
+    'watchdog_admin'
 );
 
 
@@ -464,7 +465,8 @@ CREATE TABLE public.alert_rules (
     threshold_max double precision,
     is_active boolean DEFAULT true,
     created_by integer,
-    created_at timestamp without time zone DEFAULT now()
+    created_at timestamp without time zone DEFAULT now(),
+    trigger_value boolean
 );
 
 
@@ -501,7 +503,8 @@ CREATE TABLE public.alert_template_rules (
     alert_template_id integer NOT NULL,
     metric_name text NOT NULL,
     threshold_min double precision,
-    threshold_max double precision
+    threshold_max double precision,
+    trigger_value boolean
 );
 
 
@@ -2505,5 +2508,5 @@ ALTER TABLE ONLY public.user_verification_tokens
 -- PostgreSQL database dump complete
 --
 
-\unrestrict lQHbhG0DJ7MDWVgL1wRMWfkL9Ic9TQmtL6Hm5Kj1HU7ojDfSOa7ovrgOjhdLggM
+\unrestrict 0Vktuccqyo0H4bv1Uasoyxb8H0t4Qhp7bFcIBSecytYL8ZB3H4vHbkmzvPkS7V4
 

@@ -55,6 +55,7 @@ def get_db():
 
 class GatewayRegistration(BaseModel):
     gateway_id: str
+    site_id: int
     user_id: int | None = None
     name: str | None = None
     firmware_version: str | None = None
@@ -85,7 +86,6 @@ class User(BaseModel):
     user_id: int
     email: str
     org_id: int
-    role: str
     is_verified: bool
 
 class UserCreate(BaseModel):
@@ -98,7 +98,15 @@ class Token(BaseModel):
 
 class InviteUser(BaseModel):
     email: str
-    role: str  # 'admin' or 'viewer'
+    role: str  # site_role enum: 'global_admin' | 'site_admin' | 'global_viewer' | 'site_viewer'
+    site_id: int | None = None  # required for 'site_admin'/'site_viewer'; must be None for global roles
+    initial_password: str | None = None  # if set, admin assigns this password now (communicate
+                                          # it via a different channel than the invite email —
+                                          # that's the point: mitigates a mistyped-but-valid
+                                          # invite email address getting account access via the
+                                          # same channel the invite itself was sent through).
+                                          # If omitted, the invited user sets their own password
+                                          # after verifying their email.
 
 class LinkSSO(BaseModel):
     provider: str  # 'google', 'microsoft', 'x'
@@ -149,8 +157,11 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
+    issued_at = datetime.utcnow()
+    expire = issued_at + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    # "iat" lets get_current_user() reject tokens issued before a Suspend/Lock event
+    # (sessions_invalidated_at), even though JWTs are otherwise stateless.
+    to_encode.update({"exp": expire, "iat": issued_at})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 # --- User lookup and current user dependency
@@ -159,7 +170,7 @@ def get_user_by_email(email: str):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "SELECT user_id, email, org_id, role, is_verified, password_hash FROM users WHERE email = %s;",
+        "SELECT user_id, email, org_id, is_verified, password_hash, is_locked, is_suspended, suspend_reason FROM users WHERE email = %s;",
         (email,),
     )
     row = cur.fetchone()
@@ -167,14 +178,18 @@ def get_user_by_email(email: str):
     conn.close()
     if not row:
         return None
-    user_id, email, org_id, role, is_verified, password_hash = row
-    return User(user_id=user_id, email=email, org_id=org_id, role=role, is_verified=is_verified), password_hash
+    user_id, email, org_id, is_verified, password_hash, is_locked, is_suspended, suspend_reason = row
+    user = User(user_id=user_id, email=email, org_id=org_id, is_verified=is_verified)
+    return user, password_hash, is_locked, is_suspended, suspend_reason
 
 def get_user_by_id(user_id: int):
+    """Returns (User, sessions_invalidated_at) or None. sessions_invalidated_at is kept out
+    of the public User model since it's an internal session-management detail, not something
+    that should be returned from /users/me."""
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "SELECT user_id, email, org_id, role, is_verified FROM users WHERE user_id = %s;",
+        "SELECT user_id, email, org_id, is_verified, sessions_invalidated_at FROM users WHERE user_id = %s;",
         (user_id,),
     )
     row = cur.fetchone()
@@ -182,8 +197,9 @@ def get_user_by_id(user_id: int):
     conn.close()
     if not row:
         return None
-    uid, email, org_id, role, is_verified = row
-    return User(user_id=uid, email=email, org_id=org_id, role=role, is_verified=is_verified)
+    uid, email, org_id, is_verified, sessions_invalidated_at = row
+    user = User(user_id=uid, email=email, org_id=org_id, is_verified=is_verified)
+    return user, sessions_invalidated_at
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     credentials_exception = HTTPException(
@@ -194,21 +210,189 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
-        if user_id is None:
+        issued_at = payload.get("iat")
+        if user_id is None or issued_at is None:
             raise credentials_exception
         user_id = int(user_id)  # sub is always a string in the token; cast back for the DB lookup
+        issued_at = datetime.utcfromtimestamp(issued_at)
     except (JWTError, ValueError):
         raise credentials_exception
-    user = get_user_by_id(user_id)
-    if user is None:
+
+    result = get_user_by_id(user_id)
+    if result is None:
         raise credentials_exception
+    user, sessions_invalidated_at = result
+
+    if sessions_invalidated_at is not None and issued_at < sessions_invalidated_at:
+        # Token predates a Suspend/Lock/forced-signout event — reject even though it hasn't expired.
+        raise HTTPException(
+            status_code=401,
+            detail="Session has been invalidated. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     if not user.is_verified:
         raise HTTPException(status_code=403, detail="Email not verified")
     return user
 
-def require_role(user: User, allowed: list[str]):
-    if user.role not in allowed:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
+# --- Access control (user_site_roles / role_hierarchy) ---
+#
+# Rank values confirmed: global_admin=4, site_admin=3, global_viewer=2, site_viewer=1,
+# no_access=0 (higher = more privileged). Read from role_hierarchy at query time below
+# rather than hardcoded, so this doesn't drift if the ranks are ever re-tuned.
+
+SITE_ROLE_ADMIN_LEVEL = {"global_admin", "site_admin"}
+SITE_ROLE_ANY_ACCESS = {"global_admin", "site_admin", "global_viewer", "site_viewer"}
+
+def get_global_role(cur, user_id: int) -> str | None:
+    """A user has at most one global (site_id IS NULL) grant — enforced by a unique index."""
+    cur.execute(
+        "SELECT role FROM user_site_roles WHERE user_id = %s AND site_id IS NULL;",
+        (user_id,),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+def get_site_role(cur, user_id: int, site_id: int) -> str | None:
+    """A user has at most one grant per site — enforced by a unique index."""
+    cur.execute(
+        "SELECT role FROM user_site_roles WHERE user_id = %s AND site_id = %s;",
+        (user_id, site_id),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+def get_role_rank(cur, role: str | None) -> int:
+    if role is None:
+        return 0  # equivalent to no_access
+    cur.execute("SELECT rank FROM role_hierarchy WHERE role = %s;", (role,))
+    row = cur.fetchone()
+    return row[0] if row else 0
+
+def get_user_best_rank(cur, user_id: int) -> int:
+    """The user's highest-ranked grant across their global role and every site role they hold."""
+    global_role = get_global_role(cur, user_id)
+    if global_role:
+        return get_role_rank(cur, global_role)
+    cur.execute("SELECT role FROM user_site_roles WHERE user_id = %s;", (user_id,))
+    return max((get_role_rank(cur, role) for (role,) in cur.fetchall()), default=0)
+
+def get_admin_site_ids(cur, user_id: int) -> list[int]:
+    """Sites where this user holds site_admin specifically (not site_viewer)."""
+    cur.execute("SELECT site_id FROM user_site_roles WHERE user_id = %s AND role = 'site_admin';", (user_id,))
+    return [r[0] for r in cur.fetchall()]
+
+def get_user_site_ids(cur, user_id: int) -> list[int]:
+    """Every site this user holds ANY site-scoped role on (site_admin or site_viewer)."""
+    cur.execute("SELECT site_id FROM user_site_roles WHERE user_id = %s AND site_id IS NOT NULL;", (user_id,))
+    return [r[0] for r in cur.fetchall()]
+
+def authorize_admin_action_on_user(cur, actor: User, target_user_id: int, target_org_id: int, rank_relation: str):
+    """
+    Shared authorization for admin_delete_user / lock_user / suspend_user's non-self path.
+    rank_relation: 'strict' (actor must strictly outrank target — Lock, Delete) or
+                   'gte' (same-or-lower rank allowed — Suspend).
+
+    - Viewers (global_viewer, site_viewer) can NEVER act here, full stop, regardless of rank —
+      only global_admin or site_admin qualify as "admin" at all.
+    - global_admin acts on anyone in the org.
+    - site_admin may only act on a target who shares at least one site with them (i.e. the
+      target holds some role — global or site-scoped — on a site the actor administers),
+      and only subject to the rank relation above.
+    """
+    if target_org_id != actor.org_id:
+        raise HTTPException(status_code=403, detail="User belongs to another organisation")
+
+    if get_global_role(cur, actor.user_id) == "global_admin":
+        return
+
+    actor_site_ids = set(get_admin_site_ids(cur, actor.user_id))
+    if not actor_site_ids:
+        raise HTTPException(status_code=403, detail="Admin permission required")
+
+    target_site_ids = set(get_user_site_ids(cur, target_user_id))
+    if not (actor_site_ids & target_site_ids):
+        raise HTTPException(status_code=403, detail="You do not share a site with this user")
+
+    actor_rank = get_user_best_rank(cur, actor.user_id)
+    target_rank = get_user_best_rank(cur, target_user_id)
+    ok = actor_rank > target_rank if rank_relation == "strict" else actor_rank >= target_rank
+    if not ok:
+        raise HTTPException(status_code=403, detail="Insufficient rank for this action")
+
+def log_event(cur, org_id: int, event_type: str, actor_user_id: int | None,
+               target_type: str, target_id: str | None, details: dict | None):
+    """Writes to the per-org event log table. Table name is built from an int org_id we
+    already trust (never from request input), so this isn't a SQL-injection vector.
+    NOTE (Phase G): only a handful of event_type call sites are wired up below
+    (invites, lock/suspend, GDPR deletes). The full event_type/details matrix described in
+    the outstanding-tasks doc is still a design item, not something I've silently finished."""
+    tbl = f"org_event_log_org_{int(org_id)}"
+    cur.execute(
+        f"INSERT INTO {tbl} (event_type, actor_user_id, target_type, target_id, details) "
+        f"VALUES (%s, %s, %s, %s, %s::jsonb);",
+        (event_type, actor_user_id, target_type, target_id,
+         json.dumps(details) if details is not None else None),
+    )
+
+def require_org_admin(cur, user: User):
+    """Global-Admin-or-higher only (org-wide actions: backups settings, org GDPR deletion,
+    etc). Rank-based rather than a literal 'global_admin' string match, so watchdog_admin
+    (rank 5, above global_admin's rank 4) automatically qualifies too without needing every
+    ACL check updated by hand whenever a new higher-ranked role is added."""
+    if get_user_best_rank(cur, user.user_id) < get_role_rank(cur, "global_admin"):
+        raise HTTPException(status_code=403, detail="Global Admin permission required")
+
+def require_org_access(cur, user: User, admin: bool = False):
+    """
+    Org-wide check for resources not yet wired up to a specific site_id
+    (gateways/sensors/OTA jobs currently register without a site_id — see Phase B).
+    admin=True  -> must be global_admin-or-higher
+    admin=False -> must be global_admin-or-higher, or global_viewer
+    """
+    role = get_global_role(cur, user.user_id)
+    if get_role_rank(cur, role) >= get_role_rank(cur, "global_admin"):
+        return
+    if not admin and role == "global_viewer":
+        return
+    raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+def require_site_access(cur, user: User, org_id: int, site_id: int, admin: bool = False):
+    """
+    Full site-scoped check, for use once endpoints carry a site_id (Phase B onward).
+    Confirms the site belongs to the user's org, then checks global or site-level role.
+    """
+    cur.execute("SELECT org_id FROM sites WHERE site_id = %s;", (site_id,))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Site not found")
+    if row[0] != org_id:
+        raise HTTPException(status_code=403, detail="Site belongs to another organisation")
+
+    global_role = get_global_role(cur, user.user_id)
+    if get_role_rank(cur, global_role) >= get_role_rank(cur, "global_admin"):
+        return
+    if not admin and global_role == "global_viewer":
+        return
+
+    site_role = get_site_role(cur, user.user_id, site_id)
+    if admin and site_role == "site_admin":
+        return
+    if not admin and site_role in ("site_admin", "site_viewer"):
+        return
+
+    raise HTTPException(status_code=403, detail="Insufficient permissions for this site")
+
+def require_platform_admin(cur, user: User):
+    """Gate for the shared/global hardware catalog (mcu_variants, mcu_variant_gpio_pins,
+    module_mcu_compatibility) — these tables have no org_id, so an ordinary org's Global
+    Admin must NOT be able to edit them (that was the gap flagged previously). Requires
+    the literal 'watchdog_admin' role specifically, not just "outranks global_admin" —
+    intentionally not rank-based like require_org_admin, since this isn't "more senior
+    within an org", it's "WatchDog platform staff", a different axis entirely.
+    Needs db_migration_003.sql applied (adds the 'watchdog_admin' enum value + rank)."""
+    if get_global_role(cur, user.user_id) != "watchdog_admin":
+        raise HTTPException(status_code=403, detail="WatchDog platform admin permission required")
 
 # --- Sending Email stub
 
@@ -217,12 +401,28 @@ def send_verification_email(email: str, token: str):
     # Replace this with real email sending later
     print(f"[DEBUG] Send verification email to {email}: {verify_url}")
 
+# --- verification tokens (user_verification_tokens table) ---
+
+def create_verification_token(cur, user_id: int, reason: str, expires_hours: int = 24) -> str:
+    """Issue a verification token row for a user within an existing cursor/transaction.
+
+    reason must be one of the verification_reason enum values:
+    'signup', 'account_deletion', 'password_reset', 'sso_removal', 'account_unlock'.
+    """
+    token = str(uuid.uuid4())
+    expires = datetime.utcnow() + timedelta(hours=expires_hours)
+    cur.execute(
+        """
+        INSERT INTO user_verification_tokens (user_id, token, reason, expires_at)
+        VALUES (%s, %s, %s, %s);
+        """,
+        (user_id, token, reason, expires),
+    )
+    return token
+
 # --- create organisations and unverified users
 
 def create_org_and_owner(email: str, password_hash: str | None, provider: str | None, sub: str | None):
-    token = str(uuid.uuid4())
-    expires = datetime.utcnow() + timedelta(hours=24)
-
     conn = get_db()
     cur = conn.cursor()
 
@@ -233,25 +433,39 @@ def create_org_and_owner(email: str, password_hash: str | None, provider: str | 
     )
     org_id = cur.fetchone()[0]
 
-    # create user as owner
+    # create user as owner (unverified)
     cur.execute(
         """
-        INSERT INTO users (email, password_hash, social_provider, social_sub,
-                           is_verified, verification_token, verification_expires,
-                           org_id, role)
-        VALUES (%s, %s, %s, %s, FALSE, %s, %s, %s, 'owner')
+        INSERT INTO users (email, password_hash, is_verified, org_id)
+        VALUES (%s, %s, FALSE, %s)
         RETURNING user_id;
         """,
-        (email, password_hash, provider, sub, token, expires, org_id),
+        (email, password_hash, org_id),
     )
     user_id = cur.fetchone()[0]
 
-    # add auth method if password
+    # the first user of an org is granted org-wide Global Admin (site_id = NULL)
+    cur.execute(
+        """
+        INSERT INTO user_site_roles (user_id, site_id, role, granted_by)
+        VALUES (%s, NULL, 'global_admin', %s);
+        """,
+        (user_id, user_id),
+    )
+
+    # record auth method(s)
     if password_hash:
         cur.execute(
             "INSERT INTO user_auth_methods (user_id, method_type) VALUES (%s, %s);",
             (user_id, "password"),
         )
+    if provider and sub:
+        cur.execute(
+            "INSERT INTO user_auth_methods (user_id, method_type, provider_sub) VALUES (%s, %s, %s);",
+            (user_id, provider, sub),
+        )
+
+    token = create_verification_token(cur, user_id, "signup")
 
     conn.commit()
     cur.close()
@@ -260,22 +474,36 @@ def create_org_and_owner(email: str, password_hash: str | None, provider: str | 
     send_verification_email(email, token)
     return user_id
 
-def create_unverified_user_in_org(email: str, org_id: int, role: str):
-    token = str(uuid.uuid4())
-    expires = datetime.utcnow() + timedelta(hours=24)
-
+def create_unverified_user_in_org(email: str, org_id: int, role: str, site_id: int | None,
+                                   granted_by: int, password_hash: str | None = None):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         """
-        INSERT INTO users (email, is_verified, verification_token, verification_expires,
-                           org_id, role)
-        VALUES (%s, FALSE, %s, %s, %s, %s)
+        INSERT INTO users (email, is_verified, org_id, password_hash)
+        VALUES (%s, FALSE, %s, %s)
         RETURNING user_id;
         """,
-        (email, token, expires, org_id, role),
+        (email, org_id, password_hash),
     )
     user_id = cur.fetchone()[0]
+
+    if password_hash:
+        cur.execute(
+            "INSERT INTO user_auth_methods (user_id, method_type) VALUES (%s, 'password');",
+            (user_id,),
+        )
+
+    cur.execute(
+        """
+        INSERT INTO user_site_roles (user_id, site_id, role, granted_by)
+        VALUES (%s, %s, %s, %s);
+        """,
+        (user_id, site_id, role, granted_by),
+    )
+
+    token = create_verification_token(cur, user_id, "signup")
+
     conn.commit()
     cur.close()
     conn.close()
@@ -307,7 +535,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     result = get_user_by_email(form_data.username)
     if not result:
         raise HTTPException(status_code=400, detail="Incorrect email or password")
-    user, password_hash = result
+    user, password_hash, is_locked, is_suspended, suspend_reason = result
 
     if not password_hash or not verify_password(form_data.password, password_hash):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
@@ -315,18 +543,27 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     if not user.is_verified:
         raise HTTPException(status_code=403, detail="Email not verified")
 
+    if is_locked:
+        raise HTTPException(status_code=403, detail="Account is locked. Use the account recovery flow to regain access.")
+
+    if is_suspended:
+        detail = "Account is suspended."
+        if suspend_reason:
+            detail += f" Reason: {suspend_reason}"
+        raise HTTPException(status_code=403, detail=detail)
+
     access_token = create_access_token(data={"sub": str(user.user_id)})
     return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/verify") # process email varification links
+@app.get("/verify") # process email verification links
 def verify_email(token: str):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         """
-        SELECT user_id, verification_expires
-        FROM users
-        WHERE verification_token = %s AND is_verified = FALSE;
+        SELECT token_id, user_id, expires_at, used_at
+        FROM user_verification_tokens
+        WHERE token = %s AND reason = 'signup';
         """,
         (token,),
     )
@@ -335,32 +572,99 @@ def verify_email(token: str):
     if not row:
         cur.close()
         conn.close()
-        raise HTTPException(status_code=400, detail="Invalid or already used token")
+        raise HTTPException(status_code=400, detail="Invalid verification token")
 
-    user_id, expires = row
+    token_id, user_id, expires_at, used_at = row
 
-    if datetime.utcnow() > expires:
-        cur.execute("DELETE FROM users WHERE user_id = %s;", (user_id,))
+    if used_at is not None:
+        cur.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail="Token already used")
+
+    if datetime.utcnow() > expires_at:
+        # signup token expired -> the account was never verified, so drop it;
+        # ON DELETE CASCADE on user_verification_tokens.user_id cleans up the token row too
+        cur.execute("DELETE FROM users WHERE user_id = %s AND is_verified = FALSE;", (user_id,))
         conn.commit()
         cur.close()
         conn.close()
         raise HTTPException(status_code=400, detail="Verification expired. Please register again.")
 
-    cur.execute(
-        """
-        UPDATE users
-        SET is_verified = TRUE,
-            verification_token = NULL,
-            verification_expires = NULL
-        WHERE user_id = %s;
-        """,
-        (user_id,),
-    )
+    cur.execute("UPDATE users SET is_verified = TRUE WHERE user_id = %s;", (user_id,))
+    cur.execute("UPDATE user_verification_tokens SET used_at = NOW() WHERE token_id = %s;", (token_id,))
+
+    # If the inviting admin didn't set a default password, this user has none yet —
+    # kick off the "set your own password" flow now that their email is confirmed.
+    cur.execute("SELECT password_hash, email FROM users WHERE user_id = %s;", (user_id,))
+    password_hash, email = cur.fetchone()
+    password_setup_required = password_hash is None
+    if password_setup_required:
+        setup_token = create_verification_token(cur, user_id, "password_reset")
+        setup_url = FRONTEND_BASE_URL + f"/set-password?token={setup_token}"
+        print(f"[DEBUG] Send password setup link to {email}: {setup_url}")
+
     conn.commit()
     cur.close()
     conn.close()
 
-    return {"status": "verified"}
+    return {"status": "verified", "password_setup_required": password_setup_required}
+
+@app.post("/users/password/request_set")
+def request_initial_password_setup(email: str):
+    """For a verified user who still has no password (admin didn't preset one, and they
+    missed/lost the link from /verify). Always returns success regardless of eligibility,
+    to avoid leaking account existence/state via response differences."""
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT user_id FROM users WHERE email = %s AND is_verified = TRUE AND password_hash IS NULL;",
+        (email,),
+    )
+    row = cur.fetchone()
+    if row:
+        token = create_verification_token(cur, row[0], "password_reset")
+        conn.commit()
+        setup_url = FRONTEND_BASE_URL + f"/set-password?token={token}"
+        print(f"[DEBUG] Send password setup link to {email}: {setup_url}")
+    cur.close(); conn.close()
+    return {"status": "if_eligible_email_sent"}
+
+class SetPasswordFromToken(BaseModel):
+    token: str
+    new_password: str
+
+@app.post("/users/password/set")
+def set_password_from_token(data: SetPasswordFromToken):
+    """Confirms a password_reset token and sets the password. Used both for the
+    invited-user first-password-setup flow and can double as a general forgot-password
+    flow later (same token reason, same mechanics)."""
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT token_id, user_id, expires_at, used_at FROM user_verification_tokens WHERE token = %s AND reason = 'password_reset';",
+        (data.token,),
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Invalid token")
+    token_id, user_id, expires_at, used_at = row
+    if used_at is not None or datetime.utcnow() > expires_at:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Token expired or already used")
+    if len(data.new_password) < 8:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    new_hash = get_password_hash(data.new_password)
+    cur.execute("UPDATE users SET password_hash = %s WHERE user_id = %s;", (new_hash, user_id))
+    cur.execute(
+        "INSERT INTO user_auth_methods (user_id, method_type) VALUES (%s, 'password') "
+        "ON CONFLICT (user_id, method_type) DO NOTHING;",
+        (user_id,),
+    )
+    cur.execute("UPDATE user_verification_tokens SET used_at = NOW() WHERE token_id = %s;", (token_id,))
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "password_set"}
 
 @app.post("/ingest")
 def ingest(data: IngestPayload):
@@ -394,6 +698,16 @@ def ingest(data: IngestPayload):
         ),
     )
 
+    # Phase C: evaluate alert_rules for this reading (see note above evaluate_alert_rules)
+    serial_number = resolve_serial_number(cur, data.gateway_id, data.sensor_id)
+    if serial_number:
+        evaluate_alert_rules(cur, serial_number, {
+            "temperature": data.temperature,
+            "humidity": data.humidity,
+            "battery": data.battery,
+            "motion": data.motion,
+        })
+
     conn.commit()
     cur.close()
     conn.close()
@@ -402,10 +716,31 @@ def ingest(data: IngestPayload):
 
 @app.post("/users/invite") # users invited by org admins
 def invite_user(data: InviteUser, current_user: User = Depends(get_current_user)):
-    require_role(current_user, ["owner", "admin"])
+    # 'watchdog_admin' deliberately excluded — it's a WatchDog platform-staff role, not an
+    # org-level grant, and letting any org's Global Admin hand it out via a normal invite
+    # would let them grant themselves/anyone platform-wide catalog access. Assign it
+    # directly via SQL (see db_migration_003.sql) until/unless a dedicated privileged
+    # mechanism for it is built.
+    if data.role not in ("global_admin", "site_admin", "global_viewer", "site_viewer"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    is_global = data.role in ("global_admin", "global_viewer")
+    if is_global and data.site_id is not None:
+        raise HTTPException(status_code=400, detail="site_id must be omitted for a global role")
+    if not is_global and data.site_id is None:
+        raise HTTPException(status_code=400, detail="site_id is required for a site-scoped role")
+
+    if data.initial_password is not None and len(data.initial_password) < 8:
+        raise HTTPException(status_code=400, detail="initial_password must be at least 8 characters")
 
     conn = get_db()
     cur = conn.cursor()
+
+    if is_global:
+        require_org_admin(cur, current_user)
+    else:
+        require_site_access(cur, current_user, current_user.org_id, data.site_id, admin=True)
+
     cur.execute("SELECT user_id FROM users WHERE email = %s;", (data.email,))
     row = cur.fetchone()
     cur.close()
@@ -414,11 +749,11 @@ def invite_user(data: InviteUser, current_user: User = Depends(get_current_user)
     if row:
         raise HTTPException(status_code=400, detail="User already exists")
 
-    if data.role not in ("admin", "viewer"):
-        raise HTTPException(status_code=400, detail="Invalid role")
-
-    user_id = create_unverified_user_in_org(data.email, current_user.org_id, data.role)
-    return {"status": "invited", "user_id": user_id}
+    initial_hash = get_password_hash(data.initial_password) if data.initial_password else None
+    user_id = create_unverified_user_in_org(
+        data.email, current_user.org_id, data.role, data.site_id, current_user.user_id, initial_hash
+    )
+    return {"status": "invited", "user_id": user_id, "password_preset": initial_hash is not None}
 
 # add this endpoint, e.g. near list_auth_methods
 @app.get("/users/me", response_model=User)
@@ -468,30 +803,12 @@ def ensure_provider_sub_unique(provider: str, sub: str, user_id: int):
 
 @app.post("/users/me/link-sso") # links SSO methods for a user
 def link_sso(data: LinkSSO, current_user: User = Depends(get_current_user)):
-    provider = data.provider
-
-    # Here you would exchange data.code for tokens and get provider_sub + email
-    # For now, we stub provider_sub and email
-    provider_sub = f"stub-{provider}-sub"
-    email = current_user.email  # assume same email
-
-    ensure_email_not_taken(email, current_user.user_id)
-    ensure_provider_sub_unique(provider, provider_sub, current_user.user_id)
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO user_auth_methods (user_id, method_type, provider_sub)
-        VALUES (%s, %s, %s);
-        """,
-        (current_user.user_id, provider, provider_sub),
-    )
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return {"status": "linked", "provider": provider}
+    # PARKED: real OAuth code exchange needs a registered domain + email service, which
+    # don't exist yet. Previously this silently "succeeded" using a fake stub provider_sub
+    # (f"stub-{provider}-sub"), which would have written misleading rows into
+    # user_auth_methods and made it look like SSO worked in a demo when it didn't actually
+    # authenticate anyone. Failing loudly is safer than a convincing fake.
+    raise HTTPException(status_code=501, detail=f"SSO login via {data.provider} is not available yet")
 
 @app.post("/users/me/unlink-method") # unlink an SSO method for user
 def unlink_method(data: UnlinkMethod, current_user: User = Depends(get_current_user)):
@@ -552,21 +869,22 @@ def create_crypto_profile(data: CryptoProfileCreate):
 
 @app.post("/gateways/register")
 def register_gateway(data: GatewayRegistration, current_user: User = Depends(get_current_user)):
-    require_role(current_user, ["owner", "admin"])
     conn = get_db()
     cur = conn.cursor()
+    require_site_access(cur, current_user, current_user.org_id, data.site_id, admin=True)
     cur.execute(
         """
-        INSERT INTO gateways (gateway_id, user_id, org_id, name, firmware_version, crypto_id)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO gateways (gateway_id, user_id, org_id, site_id, name, firmware_version, crypto_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (gateway_id) DO UPDATE
         SET user_id = EXCLUDED.user_id,
             org_id = EXCLUDED.org_id,
+            site_id = EXCLUDED.site_id,
             name = EXCLUDED.name,
             firmware_version = EXCLUDED.firmware_version,
             crypto_id = EXCLUDED.crypto_id;
         """,
-        (data.gateway_id, current_user.user_id, current_user.org_id,
+        (data.gateway_id, current_user.user_id, current_user.org_id, data.site_id,
          data.name, data.firmware_version, data.crypto_id),
     )
     conn.commit()
@@ -576,14 +894,12 @@ def register_gateway(data: GatewayRegistration, current_user: User = Depends(get
 
 @app.post("/sensors/register")
 def register_sensor(data: SensorRegistration, current_user: User = Depends(get_current_user)):
-    require_role(current_user, ["owner", "admin"])
-
     conn = get_db()
     cur = conn.cursor()
 
     # Ensure gateway exists and belongs to the same organisation
     cur.execute(
-        "SELECT org_id FROM gateways WHERE gateway_id = %s;",
+        "SELECT org_id, site_id FROM gateways WHERE gateway_id = %s;",
         (data.gateway_id,),
     )
     row = cur.fetchone()
@@ -592,20 +908,28 @@ def register_sensor(data: SensorRegistration, current_user: User = Depends(get_c
         conn.close()
         raise HTTPException(status_code=404, detail="Gateway not found")
 
-    gateway_org_id = row[0]
+    gateway_org_id, gateway_site_id = row
     if gateway_org_id != current_user.org_id:
         cur.close()
         conn.close()
         raise HTTPException(status_code=403, detail="Gateway belongs to another organisation")
 
+    # A sensor inherits its site from its gateway rather than taking one directly —
+    # a sensor can't be on a different site than the gateway it reports through.
+    if gateway_site_id is None:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Gateway has no site assigned yet; assign one before adding sensors")
+    require_site_access(cur, current_user, current_user.org_id, gateway_site_id, admin=True)
+
     # Insert/update sensor
     cur.execute(
         """
-        INSERT INTO sensors (sensor_id, gateway_id, org_id, name, location, firmware_version)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO sensors (sensor_id, gateway_id, org_id, site_id, name, location, firmware_version)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (sensor_id) DO UPDATE
         SET gateway_id = EXCLUDED.gateway_id,
             org_id = EXCLUDED.org_id,
+            site_id = EXCLUDED.site_id,
             name = EXCLUDED.name,
             location = EXCLUDED.location,
             firmware_version = EXCLUDED.firmware_version;
@@ -614,6 +938,7 @@ def register_sensor(data: SensorRegistration, current_user: User = Depends(get_c
             data.sensor_id,
             data.gateway_id,
             current_user.org_id,
+            gateway_site_id,
             data.name,
             data.location,
             data.firmware_version,
@@ -680,6 +1005,15 @@ def hard_delete_gateway_endpoint(data: HardDeleteGateway):
     conn.close()
     return {"status": "gateway_hard_deleted", "gateway_id": data.gateway_id}
 
+@app.post("/devices/{serial_number}/factory_reset")
+def factory_reset_device(serial_number: str, current_user: User = Depends(get_current_user)):
+    """PARKED per your instruction. When built, this should: send a 'factory reset' OTA
+    command via ota_jobs to the device, and once confirmed, clear its org/site links and
+    crypto_profile links in device_registry/gateways/sensors so it can be resold or
+    reprovisioned. That's real design work (needs an OTA command *type* beyond firmware
+    updates, and a confirmation-driven state machine), not something to fake here."""
+    raise HTTPException(status_code=501, detail="Node factory reset is not implemented yet")
+
 
 @app.post("/users/gdpr_delete")
 def gdpr_delete_user(data: GdprDeleteUser):
@@ -693,10 +1027,9 @@ def gdpr_delete_user(data: GdprDeleteUser):
 
 @app.post("/ota/jobs/create")
 def create_ota_job(data: OtaJobCreate, current_user: User = Depends(get_current_user)):
-    require_role(current_user, ["owner", "admin"])
-
     conn = get_db()
     cur = conn.cursor()
+    require_org_admin(cur, current_user)  # Global Admin only for now, per your instruction — revisit site-scoping later
 
     # Validate target belongs to user's organisation
     if data.target_type == "gateway":
@@ -901,3 +1234,1056 @@ def update_ota_job(data: OtaJobUpdate):
     conn.close()
 
     return {"status": "ota_job_updated", "ota_id": data.ota_id}
+
+
+# =====================================================================================
+# Phase B — Registry-first device provisioning
+# =====================================================================================
+# ASSUMPTION FLAGGED: gateways.gateway_id / sensors.sensor_id are separate text PKs from
+# serial_number in the schema, but nothing in the provisioning spec says what a freshly
+# manufactured device's gateway_id/sensor_id *is* before it's provisioned. I'm using
+# serial_number as the gateway_id/sensor_id at provisioning time (i.e. they're the same
+# string) since that's the only identifier device_registry actually gives us. If your
+# firmware assigns its own separate gateway_id/sensor_id at boot, this needs revisiting —
+# the simulator (simulator/sim.py) also still uses made-up ids ("gw1"/"room1") rather than
+# real serials, so it'll need updating to match whatever we land on here.
+
+class ProvisionDevice(BaseModel):
+    serial_number: str
+    site_id: int
+    name: str | None = None
+    location: str | None = None          # used for sensors only
+    node_template_id: int | None = None  # optional: seed alert_rules from its alert_template
+
+@app.post("/provisioning/activate")
+# Serves BOTH the QR-quick-provision flow and the manual provisioning form — per the spec
+# they differ only in how the frontend collects serial_number/site_id, not in what happens
+# server-side, so one endpoint covers both.
+def activate_device(data: ProvisionDevice, current_user: User = Depends(get_current_user)):
+    conn = get_db()
+    cur = conn.cursor()
+    require_site_access(cur, current_user, current_user.org_id, data.site_id, admin=True)
+
+    cur.execute(
+        "SELECT device_type, is_provisioned FROM device_registry WHERE serial_number = %s;",
+        (data.serial_number,),
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Serial number not found in device registry")
+    device_type, is_provisioned = row
+    if is_provisioned:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Device has already been provisioned")
+
+    device_id = data.serial_number  # see assumption note above
+
+    if device_type == "gateway":
+        cur.execute(
+            """
+            INSERT INTO gateways (gateway_id, org_id, site_id, serial_number, name, is_active)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
+            ON CONFLICT (gateway_id) DO UPDATE
+            SET org_id = EXCLUDED.org_id, site_id = EXCLUDED.site_id,
+                serial_number = EXCLUDED.serial_number, name = EXCLUDED.name, is_active = TRUE;
+            """,
+            (device_id, current_user.org_id, data.site_id, data.serial_number, data.name),
+        )
+    elif device_type == "sensor":
+        cur.execute(
+            """
+            INSERT INTO sensors (sensor_id, org_id, site_id, serial_number, name, location, is_active)
+            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+            ON CONFLICT (sensor_id) DO UPDATE
+            SET org_id = EXCLUDED.org_id, site_id = EXCLUDED.site_id,
+                serial_number = EXCLUDED.serial_number, name = EXCLUDED.name,
+                location = EXCLUDED.location, is_active = TRUE;
+            """,
+            (device_id, current_user.org_id, data.site_id, data.serial_number, data.name, data.location),
+        )
+    else:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail=f"Unknown device_type '{device_type}' in registry")
+
+    cur.execute(
+        "UPDATE device_registry SET is_provisioned = TRUE, provisioned_at = NOW() WHERE serial_number = %s;",
+        (data.serial_number,),
+    )
+
+    # Optional: seed alert_rules for this device from a node_template's linked alert_template
+    if data.node_template_id is not None:
+        cur.execute(
+            "SELECT alert_template_id FROM node_templates WHERE node_template_id = %s AND org_id = %s;",
+            (data.node_template_id, current_user.org_id),
+        )
+        nt_row = cur.fetchone()
+        if not nt_row:
+            cur.close(); conn.close()
+            raise HTTPException(status_code=404, detail="Node template not found")
+        alert_template_id = nt_row[0]
+        if alert_template_id is not None:
+            cur.execute(
+                "SELECT metric_name, threshold_min, threshold_max, trigger_value FROM alert_template_rules WHERE alert_template_id = %s;",
+                (alert_template_id,),
+            )
+            for metric_name, tmin, tmax, trigger_value in cur.fetchall():
+                cur.execute(
+                    """
+                    INSERT INTO alert_rules (serial_number, metric_name, threshold_min, threshold_max, trigger_value, created_by)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (serial_number, metric_name) WHERE is_active = TRUE DO NOTHING;
+                    """,
+                    (data.serial_number, metric_name, tmin, tmax, trigger_value, current_user.user_id),
+                )
+
+    log_event(cur, current_user.org_id, "device_provisioned", current_user.user_id,
+              device_type, data.serial_number, {"site_id": data.site_id})
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"status": "provisioned", "serial_number": data.serial_number, "device_type": device_type}
+
+# Batch QR-photo import (deferred per outstanding-tasks doc — not building this pass).
+
+
+# =====================================================================================
+# Phase C — Alert evaluation logic
+# =====================================================================================
+# DECISION MADE (flagging, not asking): evaluating synchronously inside /ingest rather
+# than a separate job. At current/expected prototype scale there's no queue/worker
+# infrastructure in docker-compose.yml, and doing it inline keeps the demo simple with
+# no extra moving parts. Revisit if ingest volume ever makes this a bottleneck.
+#
+# battery is evaluated as raw voltage (matches the schema decision that %-conversion is a
+# frontend-only concern). motion is boolean and doesn't fit the min/max threshold model
+# alert_rules uses — not evaluated here; a boolean-trigger rule type would need its own
+# schema support, flagging as a gap rather than silently faking it.
+
+def resolve_serial_number(cur, gateway_id: str | None, sensor_id: str | None) -> str | None:
+    if sensor_id:
+        cur.execute("SELECT serial_number FROM sensors WHERE sensor_id = %s;", (sensor_id,))
+        row = cur.fetchone()
+        if row and row[0]:
+            return row[0]
+    if gateway_id:
+        cur.execute("SELECT serial_number FROM gateways WHERE gateway_id = %s;", (gateway_id,))
+        row = cur.fetchone()
+        if row:
+            return row[0]
+    return None
+
+def evaluate_alert_rules(cur, serial_number: str, readings: dict):
+    """readings values may be float (numeric metrics, checked against threshold_min/max) or
+    bool (boolean metrics like motion, checked against trigger_value). Requires
+    db_migration_002.sql (adds alert_rules.trigger_value) to have been applied."""
+    for metric_name, value in readings.items():
+        if value is None:
+            continue
+        cur.execute(
+            """
+            SELECT alert_rule_id, threshold_min, threshold_max, trigger_value
+            FROM alert_rules
+            WHERE serial_number = %s AND metric_name = %s AND is_active = TRUE;
+            """,
+            (serial_number, metric_name),
+        )
+        rule = cur.fetchone()
+        if not rule:
+            continue
+        alert_rule_id, tmin, tmax, trigger_value = rule
+        if isinstance(value, bool):  # check bool before number — bool is a subclass of int in Python
+            breached = trigger_value is not None and value == trigger_value
+        else:
+            breached = (tmin is not None and value < tmin) or (tmax is not None and value > tmax)
+        if not breached:
+            continue
+        cur.execute("SELECT 1 FROM alerts WHERE alert_rule_id = %s AND status = 'open';", (alert_rule_id,))
+        if cur.fetchone():
+            continue  # already an open alert for this rule — don't spam duplicates
+        # triggered_value is double precision — booleans are stored as 1.0/0.0
+        stored_value = (1.0 if value else 0.0) if isinstance(value, bool) else value
+        cur.execute(
+            """
+            INSERT INTO alerts (alert_rule_id, serial_number, metric_name, triggered_value)
+            VALUES (%s, %s, %s, %s);
+            """,
+            (alert_rule_id, serial_number, metric_name, stored_value),
+        )
+
+
+# =====================================================================================
+# Phase D — Backup system
+# =====================================================================================
+# SCOPE LIMITATION FLAGGED: only tables with a direct org_id column are covered here
+# (sites, gateways, sensors, node_templates, alert_templates, crypto_profiles).
+# sensor_capabilities, alert_rules, alert_template_rules and user_site_roles don't carry
+# org_id directly (they hang off sensor_id/serial_number/alert_template_id/user_id), so
+# they're NOT in this backup's scope yet — they'd need join-based extraction. Flagging
+# this as a real gap rather than quietly shipping a partial backup as if it were complete.
+#
+# SCHEDULING FLAGGED: nothing in docker-compose.yml runs periodic jobs (no cron container,
+# no APScheduler in the api service). The functions below (run_scheduled_backup,
+# prune_org_backups, cleanup_orphaned_snapshots, run_weekly_fallback_backup) are ready to
+# be called by a scheduler, but nothing calls them automatically yet — that's an
+# infrastructure piece (e.g. an APScheduler thread in main.py, or a separate cron service)
+# that needs a decision on your end before it's "actually running" rather than "callable".
+
+from jobs import (
+    BACKUP_TABLES, RESTORE_PK, compute_row_hash, snapshot_org_data,
+    prune_org_backups, cleanup_orphaned_snapshots, run_scheduled_backup,
+    run_weekly_fallback_backup, run_gdpr_deletion_sweep,
+)
+
+class BackupCreate(BaseModel):
+    name: str
+    description: str | None = None
+
+@app.post("/backups/create")
+def create_backup(data: BackupCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db()
+    cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute(
+        """
+        INSERT INTO backups (org_id, name, description, schedule_type, status, started_at, created_by)
+        VALUES (%s, %s, %s, 'manual', 'in_progress', NOW(), %s)
+        RETURNING backup_id;
+        """,
+        (current_user.org_id, data.name, data.description, current_user.user_id),
+    )
+    backup_id = cur.fetchone()[0]
+    try:
+        snapshot_org_data(cur, current_user.org_id, backup_id)
+        cur.execute("UPDATE backups SET status = 'completed', completed_at = NOW() WHERE backup_id = %s;", (backup_id,))
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        cur.execute("UPDATE backups SET status = 'failed', error_message = %s WHERE backup_id = %s;", (str(e), backup_id))
+        conn.commit()
+        cur.close(); conn.close()
+        raise HTTPException(status_code=500, detail="Backup failed")
+    cur.close(); conn.close()
+    return {"status": "backup_completed", "backup_id": backup_id}
+
+@app.post("/backups/{backup_id}/restore")
+def restore_backup(backup_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db()
+    cur = conn.cursor()
+    require_org_admin(cur, current_user)
+
+    cur.execute("SELECT org_id FROM backups WHERE backup_id = %s;", (backup_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Backup not found")
+    if row[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=403, detail="Backup belongs to another organisation")
+
+    link_tbl = f"backup_snapshot_links_org_{current_user.org_id}"
+    data_tbl = f"backup_snapshot_data_org_{current_user.org_id}"
+    cur.execute(
+        f"""
+        SELECT d.source_table, d.row_data
+        FROM {link_tbl} l JOIN {data_tbl} d ON l.snapshot_data_id = d.snapshot_data_id
+        WHERE l.backup_id = %s;
+        """,
+        (backup_id,),
+    )
+    restored = 0
+    for source_table, row_data in cur.fetchall():
+        pk_col = RESTORE_PK.get(source_table)
+        if not pk_col:
+            continue
+        cols = list(row_data.keys())
+        vals = [row_data[c] for c in cols]
+        set_clause = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != pk_col)
+        col_list = ", ".join(cols)
+        placeholders = ", ".join(["%s"] * len(cols))
+        cur.execute(
+            f"INSERT INTO {source_table} ({col_list}) VALUES ({placeholders}) "
+            f"ON CONFLICT ({pk_col}) DO UPDATE SET {set_clause};",
+            vals,
+        )
+        restored += 1
+
+    log_event(cur, current_user.org_id, "backup_restored", current_user.user_id, "backup", str(backup_id), {"rows_restored": restored})
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "restored", "backup_id": backup_id, "rows_restored": restored}
+
+class BackupSettingsUpdate(BaseModel):
+    is_enabled: bool | None = None
+    daily_retention_count: int | None = None
+    weekly_retention_count: int | None = None
+    monthly_retention_count: int | None = None
+
+@app.post("/backups/settings")
+def update_backup_settings(data: BackupSettingsUpdate, current_user: User = Depends(get_current_user)):
+    conn = get_db()
+    cur = conn.cursor()
+    require_org_admin(cur, current_user)  # Global Admin only, per spec
+
+    cur.execute(
+        """
+        UPDATE org_backup_settings SET
+            is_enabled = COALESCE(%s, is_enabled),
+            daily_retention_count = COALESCE(%s, daily_retention_count),
+            weekly_retention_count = COALESCE(%s, weekly_retention_count),
+            monthly_retention_count = COALESCE(%s, monthly_retention_count),
+            updated_by = %s, updated_at = NOW()
+        WHERE org_id = %s;
+        """,
+        (data.is_enabled, data.daily_retention_count, data.weekly_retention_count,
+         data.monthly_retention_count, current_user.user_id, current_user.org_id),
+    )
+    if cur.rowcount == 0:
+        cur.execute(
+            """
+            INSERT INTO org_backup_settings (org_id, is_enabled, daily_retention_count,
+                weekly_retention_count, monthly_retention_count, updated_by)
+            VALUES (%s, COALESCE(%s, FALSE), COALESCE(%s, 7), COALESCE(%s, 4), COALESCE(%s, 3), %s);
+            """,
+            (current_user.org_id, data.is_enabled, data.daily_retention_count,
+             data.weekly_retention_count, data.monthly_retention_count, current_user.user_id),
+        )
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "backup_settings_updated"}
+
+
+# =====================================================================================
+# Phase E — GDPR deletion
+# =====================================================================================
+
+def count_global_admins(cur, org_id: int) -> int:
+    cur.execute(
+        """
+        SELECT COUNT(*) FROM user_site_roles usr
+        JOIN users u ON u.user_id = usr.user_id
+        WHERE usr.site_id IS NULL AND usr.role = 'global_admin' AND u.org_id = %s;
+        """,
+        (org_id,),
+    )
+    return cur.fetchone()[0]
+
+@app.post("/organisations/gdpr_delete/request")
+def request_org_deletion(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+
+    if count_global_admins(cur, current_user.org_id) > 1:
+        cur.close(); conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail="Other Global Admins exist for this organisation — use self-delete instead, "
+                   "or remove/demote the other admins first.",
+        )
+
+    cur.execute("SELECT 1 FROM gdpr_deletion_requests WHERE org_id = %s AND status = 'pending';", (current_user.org_id,))
+    if cur.fetchone():
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="A deletion request is already pending for this organisation")
+
+    cancel_token = str(uuid.uuid4())
+    scheduled_for = datetime.utcnow() + timedelta(days=14)
+    cur.execute(
+        """
+        INSERT INTO gdpr_deletion_requests (org_id, requested_by, scheduled_for, cancel_token)
+        VALUES (%s, %s, %s, %s)
+        RETURNING gdpr_deletion_request_id;
+        """,
+        (current_user.org_id, current_user.user_id, scheduled_for, cancel_token),
+    )
+    request_id = cur.fetchone()[0]
+    log_event(cur, current_user.org_id, "org_deletion_requested", current_user.user_id,
+              "organisation", str(current_user.org_id), {"scheduled_for": scheduled_for.isoformat()})
+    conn.commit()
+    cur.close(); conn.close()
+
+    cancel_url = FRONTEND_BASE_URL + f"/gdpr-cancel?token={cancel_token}"
+    print(f"[DEBUG] Org deletion scheduled for {scheduled_for}. Cancel: {cancel_url}")
+    return {"status": "deletion_scheduled", "scheduled_for": scheduled_for.isoformat(), "gdpr_deletion_request_id": request_id}
+
+@app.post("/organisations/gdpr_delete/cancel")
+def cancel_org_deletion(token: str, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT gdpr_deletion_request_id, org_id, status FROM gdpr_deletion_requests WHERE cancel_token = %s;",
+        (token,),
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Invalid cancellation link")
+    req_id, org_id, status_ = row
+    if org_id != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=403, detail="This request belongs to another organisation")
+    if status_ != "pending":
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail=f"Request is already {status_}")
+
+    cur.execute(
+        "UPDATE gdpr_deletion_requests SET status = 'cancelled', cancelled_by = %s, cancelled_at = NOW() WHERE gdpr_deletion_request_id = %s;",
+        (current_user.user_id, req_id),
+    )
+    log_event(cur, current_user.org_id, "org_deletion_cancelled", current_user.user_id, "organisation", str(current_user.org_id), None)
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "cancelled"}
+
+@app.post("/users/me/self_delete/request")
+def request_self_delete(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    if get_global_role(cur, current_user.user_id) == "global_admin" and count_global_admins(cur, current_user.org_id) <= 1:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="You are the last Global Admin — request organisation deletion instead")
+
+    token = create_verification_token(cur, current_user.user_id, "account_deletion")
+    conn.commit(); cur.close(); conn.close()
+
+    confirm_url = FRONTEND_BASE_URL + f"/confirm-delete?token={token}"
+    print(f"[DEBUG] Send self-delete confirmation to {current_user.email}: {confirm_url}")
+    return {"status": "confirmation_sent"}
+
+@app.post("/users/me/self_delete/confirm")
+def confirm_self_delete(token: str):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT token_id, user_id, expires_at, used_at FROM user_verification_tokens WHERE token = %s AND reason = 'account_deletion';",
+        (token,),
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Invalid token")
+    token_id, user_id, expires_at, used_at = row
+    if used_at is not None or datetime.utcnow() > expires_at:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Token expired or already used")
+
+    cur.execute("UPDATE user_verification_tokens SET used_at = NOW() WHERE token_id = %s;", (token_id,))
+    cur.execute("SELECT hard_delete_user(%s);", (user_id,))
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "account_deleted"}
+
+@app.post("/users/{target_user_id}/admin_delete")
+def admin_delete_user(target_user_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT org_id FROM users WHERE user_id = %s;", (target_user_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="User not found")
+
+    authorize_admin_action_on_user(cur, current_user, target_user_id, row[0], rank_relation="strict")
+
+    cur.execute("SELECT hard_delete_user(%s);", (target_user_id,))
+    log_event(cur, current_user.org_id, "user_deleted", current_user.user_id, "user", str(target_user_id), None)
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "user_deleted", "user_id": target_user_id}
+
+
+# =====================================================================================
+# Phase F — Lock / Suspend
+# =====================================================================================
+# Lock requires the actor to strictly outrank the target (spec: "higher-ranked admin").
+# Suspend allows same-or-lower rank (spec explicitly says "same-or-lower rank"), plus
+# self-suspend. Both now use real role_hierarchy.rank values via get_user_best_rank().
+#
+# DO NOT DELETE - Claude needs this to see the role_hierachy (stored inside the database table):
+#   Role, Rank (higher means more power)
+#   ----------
+#   watchdog_admins, 5
+#   global_admin, 4
+#   site_admin, 3
+#   global_viewer, 2
+#   site_viewer, 1
+#   no_access, 0
+
+@app.post("/users/{target_user_id}/lock")
+def lock_user(target_user_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT org_id FROM users WHERE user_id = %s;", (target_user_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="User not found")
+
+    authorize_admin_action_on_user(cur, current_user, target_user_id, row[0], rank_relation="strict")
+
+    cur.execute(
+        """
+        UPDATE users SET is_locked = TRUE, locked_at = NOW(), locked_by = %s,
+            sessions_invalidated_at = NOW()
+        WHERE user_id = %s;
+        """,
+        (current_user.user_id, target_user_id),
+    )
+    log_event(cur, current_user.org_id, "user_locked", current_user.user_id, "user", str(target_user_id), None)
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "user_locked", "user_id": target_user_id}
+
+@app.post("/users/unlock/request")
+def request_unlock(email: str):
+    """Always returns success regardless of whether the email exists/is locked, to avoid
+    leaking account existence."""
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT user_id FROM users WHERE email = %s AND is_locked = TRUE;", (email,))
+    row = cur.fetchone()
+    if row:
+        token = create_verification_token(cur, row[0], "account_unlock")
+        conn.commit()
+        unlock_url = FRONTEND_BASE_URL + f"/unlock?token={token}"
+        print(f"[DEBUG] Send unlock/password-reset email to {email}: {unlock_url}")
+    cur.close(); conn.close()
+    return {"status": "if_locked_email_sent"}
+
+class UnlockConfirm(BaseModel):
+    token: str
+    new_password: str
+
+@app.post("/users/unlock/confirm")
+def confirm_unlock(data: UnlockConfirm):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT token_id, user_id, expires_at, used_at FROM user_verification_tokens WHERE token = %s AND reason = 'account_unlock';",
+        (data.token,),
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Invalid token")
+    token_id, user_id, expires_at, used_at = row
+    if used_at is not None or datetime.utcnow() > expires_at:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Token expired or already used")
+    if len(data.new_password) < 8:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    new_hash = get_password_hash(data.new_password)
+    cur.execute(
+        "UPDATE users SET password_hash = %s, is_locked = FALSE, locked_at = NULL, locked_by = NULL WHERE user_id = %s;",
+        (new_hash, user_id),
+    )
+    cur.execute(
+        "INSERT INTO user_auth_methods (user_id, method_type) VALUES (%s, 'password') "
+        "ON CONFLICT (user_id, method_type) DO NOTHING;",
+        (user_id,),
+    )
+    cur.execute("UPDATE user_verification_tokens SET used_at = NOW() WHERE token_id = %s;", (token_id,))
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "unlocked"}
+
+class SuspendUser(BaseModel):
+    reason: str | None = None
+
+@app.post("/users/{target_user_id}/suspend")
+def suspend_user(target_user_id: int, data: SuspendUser, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT org_id FROM users WHERE user_id = %s;", (target_user_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="User not found")
+    target_org_id = row[0]
+
+    is_self = target_user_id == current_user.user_id
+    if not is_self:
+        authorize_admin_action_on_user(cur, current_user, target_user_id, target_org_id, rank_relation="gte")
+
+    cur.execute(
+        """
+        UPDATE users SET is_suspended = TRUE, suspended_at = NOW(), suspended_by = %s,
+            suspend_reason = %s, sessions_invalidated_at = NOW()
+        WHERE user_id = %s;
+        """,
+        (current_user.user_id, data.reason, target_user_id),
+    )
+    log_event(cur, target_org_id, "user_suspended", current_user.user_id, "user", str(target_user_id),
+              {"reason": data.reason, "self_triggered": is_self})
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "user_suspended", "user_id": target_user_id}
+
+@app.post("/users/{target_user_id}/unsuspend")
+def unsuspend_user(target_user_id: int, current_user: User = Depends(get_current_user)):
+    # Deliberately not self-serve: self-suspend implies suspected compromise, so
+    # un-suspending should require an admin, not the (possibly compromised) account itself.
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT org_id FROM users WHERE user_id = %s;", (target_user_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="User not found")
+    if row[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=403, detail="User belongs to another organisation")
+    require_org_admin(cur, current_user)
+
+    cur.execute(
+        "UPDATE users SET is_suspended = FALSE, suspended_at = NULL, suspended_by = NULL, suspend_reason = NULL WHERE user_id = %s;",
+        (target_user_id,),
+    )
+    log_event(cur, current_user.org_id, "user_unsuspended", current_user.user_id, "user", str(target_user_id), None)
+    conn.commit()
+    cur.close(); conn.close()
+    return {"status": "user_unsuspended", "user_id": target_user_id}
+
+
+# =====================================================================================
+# Sites CRUD
+# =====================================================================================
+# Creating/deleting a site is an org-structural action (spec: "Organisation Admins may
+# also create multiple properties") -> Global Admin only. Editing an existing site is
+# site-scoped (Global Admin or that site's Site Admin). Listing is filtered: global-role
+# users see every site in the org, site-scoped users see only sites they hold a grant on.
+
+class SiteCreate(BaseModel):
+    name: str
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    postcode: str | None = None
+    country: str | None = None
+
+class SiteUpdate(BaseModel):
+    name: str | None = None
+    address_line1: str | None = None
+    address_line2: str | None = None
+    city: str | None = None
+    postcode: str | None = None
+    country: str | None = None
+    is_active: bool | None = None
+
+@app.post("/sites")
+def create_site(data: SiteCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute(
+        """
+        INSERT INTO sites (org_id, name, address_line1, address_line2, city, postcode, country)
+        VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING site_id;
+        """,
+        (current_user.org_id, data.name, data.address_line1, data.address_line2,
+         data.city, data.postcode, data.country),
+    )
+    site_id = cur.fetchone()[0]
+    log_event(cur, current_user.org_id, "site_created", current_user.user_id, "site", str(site_id), {"name": data.name})
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "site_created", "site_id": site_id}
+
+@app.get("/sites")
+def list_sites(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    if get_global_role(cur, current_user.user_id):
+        cur.execute(
+            "SELECT site_id, name, city, country, is_active FROM sites WHERE org_id = %s ORDER BY name;",
+            (current_user.org_id,),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT s.site_id, s.name, s.city, s.country, s.is_active FROM sites s
+            JOIN user_site_roles usr ON usr.site_id = s.site_id
+            WHERE usr.user_id = %s ORDER BY s.name;
+            """,
+            (current_user.user_id,),
+        )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"sites": [{"site_id": r[0], "name": r[1], "city": r[2], "country": r[3], "is_active": r[4]} for r in rows]}
+
+@app.put("/sites/{site_id}")
+def update_site(site_id: int, data: SiteUpdate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_site_access(cur, current_user, current_user.org_id, site_id, admin=True)
+    fields, values = [], []
+    for col in ("name", "address_line1", "address_line2", "city", "postcode", "country", "is_active"):
+        v = getattr(data, col)
+        if v is not None:
+            fields.append(f"{col} = %s")
+            values.append(v)
+    if fields:
+        values.append(site_id)
+        cur.execute(f"UPDATE sites SET {', '.join(fields)} WHERE site_id = %s;", values)
+    log_event(cur, current_user.org_id, "site_edited", current_user.user_id, "site", str(site_id), None)
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "site_updated", "site_id": site_id}
+
+@app.delete("/sites/{site_id}")
+def delete_site(site_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute("UPDATE sites SET is_active = FALSE WHERE site_id = %s AND org_id = %s;", (site_id, current_user.org_id))
+    log_event(cur, current_user.org_id, "site_deleted", current_user.user_id, "site", str(site_id), None)
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "site_deleted", "site_id": site_id}
+
+
+# =====================================================================================
+# Node Templates CRUD
+# =====================================================================================
+# Global Admin only for now, matching the other new-resource creation in this pass.
+
+class NodeTemplateCreate(BaseModel):
+    name: str
+    device_type: str  # 'gateway' or 'sensor'
+    mcu_variant_id: int
+    cloud_service_url: str | None = None
+    comms_interfaces: str | None = None
+    sleep_time_seconds: int | None = None
+    polling_interval_seconds: int | None = None
+    wlan_crypto_id: int | None = None
+    mesh_crypto_id: int | None = None
+    packet_crypto_id: int | None = None
+    alert_template_id: int | None = None
+
+def validate_node_template(data: NodeTemplateCreate):
+    if data.device_type not in ("gateway", "sensor"):
+        raise HTTPException(status_code=400, detail="device_type must be 'gateway' or 'sensor'")
+    # Validation gap closed: cloud_service_url only makes sense for gateway/root nodes.
+    if data.device_type == "sensor" and data.cloud_service_url is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="cloud_service_url must be omitted for sensor templates — only Root/Gateway nodes bind to the cloud service",
+        )
+
+@app.post("/node_templates")
+def create_node_template(data: NodeTemplateCreate, current_user: User = Depends(get_current_user)):
+    validate_node_template(data)
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute(
+        """
+        INSERT INTO node_templates (org_id, name, device_type, mcu_variant_id, cloud_service_url,
+            comms_interfaces, sleep_time_seconds, polling_interval_seconds,
+            wlan_crypto_id, mesh_crypto_id, packet_crypto_id, alert_template_id, created_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING node_template_id;
+        """,
+        (current_user.org_id, data.name, data.device_type, data.mcu_variant_id, data.cloud_service_url,
+         data.comms_interfaces, data.sleep_time_seconds, data.polling_interval_seconds,
+         data.wlan_crypto_id, data.mesh_crypto_id, data.packet_crypto_id, data.alert_template_id,
+         current_user.user_id),
+    )
+    node_template_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "node_template_created", "node_template_id": node_template_id}
+
+@app.get("/node_templates")
+def list_node_templates(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT node_template_id, name, device_type, mcu_variant_id, alert_template_id FROM node_templates WHERE org_id = %s ORDER BY name;",
+        (current_user.org_id,),
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"node_templates": [
+        {"node_template_id": r[0], "name": r[1], "device_type": r[2], "mcu_variant_id": r[3], "alert_template_id": r[4]}
+        for r in rows
+    ]}
+
+@app.delete("/node_templates/{node_template_id}")
+def delete_node_template(node_template_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute("DELETE FROM node_templates WHERE node_template_id = %s AND org_id = %s;", (node_template_id, current_user.org_id))
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "node_template_deleted", "node_template_id": node_template_id}
+
+# NOTE: node_template_module_pins / node_template_module_gpio_pins (assigning specific
+# Sensor Modules + GPIO pins to a template) are NOT covered here — that's a nested editor
+# on top of this, not built this pass. The mcu_variant_gpio_pins reserved/restricted
+# validation you asked for (agreed) belongs there once it exists; flagging rather than
+# building it against nothing.
+
+
+# =====================================================================================
+# Alert Templates + Rules CRUD (supports both numeric and boolean/motion-style metrics)
+# =====================================================================================
+
+class AlertTemplateCreate(BaseModel):
+    name: str
+
+class AlertTemplateRuleCreate(BaseModel):
+    metric_name: str
+    threshold_min: float | None = None
+    threshold_max: float | None = None
+    trigger_value: bool | None = None  # for boolean metrics like motion
+
+def validate_alert_rule_shape(threshold_min, threshold_max, trigger_value):
+    has_threshold = threshold_min is not None or threshold_max is not None
+    has_trigger = trigger_value is not None
+    if has_threshold and has_trigger:
+        raise HTTPException(status_code=400, detail="Provide either threshold_min/max OR trigger_value, not both")
+    if not has_threshold and not has_trigger:
+        raise HTTPException(status_code=400, detail="Must provide threshold_min/threshold_max (numeric) or trigger_value (boolean)")
+
+@app.post("/alert_templates")
+def create_alert_template(data: AlertTemplateCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute(
+        "INSERT INTO alert_templates (org_id, name, created_by) VALUES (%s, %s, %s) RETURNING alert_template_id;",
+        (current_user.org_id, data.name, current_user.user_id),
+    )
+    alert_template_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "alert_template_created", "alert_template_id": alert_template_id}
+
+@app.get("/alert_templates")
+def list_alert_templates(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT alert_template_id, name FROM alert_templates WHERE org_id = %s ORDER BY name;", (current_user.org_id,))
+    templates = cur.fetchall()
+    result = []
+    for tid, name in templates:
+        cur.execute(
+            "SELECT alert_template_rule_id, metric_name, threshold_min, threshold_max, trigger_value FROM alert_template_rules WHERE alert_template_id = %s;",
+            (tid,),
+        )
+        rules = [
+            {"alert_template_rule_id": r[0], "metric_name": r[1], "threshold_min": r[2], "threshold_max": r[3], "trigger_value": r[4]}
+            for r in cur.fetchall()
+        ]
+        result.append({"alert_template_id": tid, "name": name, "rules": rules})
+    cur.close(); conn.close()
+    return {"alert_templates": result}
+
+@app.delete("/alert_templates/{alert_template_id}")
+def delete_alert_template(alert_template_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute("DELETE FROM alert_templates WHERE alert_template_id = %s AND org_id = %s;", (alert_template_id, current_user.org_id))
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "alert_template_deleted", "alert_template_id": alert_template_id}
+
+@app.post("/alert_templates/{alert_template_id}/rules")
+def add_alert_template_rule(alert_template_id: int, data: AlertTemplateRuleCreate, current_user: User = Depends(get_current_user)):
+    validate_alert_rule_shape(data.threshold_min, data.threshold_max, data.trigger_value)
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute("SELECT 1 FROM alert_templates WHERE alert_template_id = %s AND org_id = %s;", (alert_template_id, current_user.org_id))
+    if not cur.fetchone():
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Alert template not found")
+    cur.execute(
+        """
+        INSERT INTO alert_template_rules (alert_template_id, metric_name, threshold_min, threshold_max, trigger_value)
+        VALUES (%s, %s, %s, %s, %s)
+        ON CONFLICT (alert_template_id, metric_name) DO UPDATE
+        SET threshold_min = EXCLUDED.threshold_min, threshold_max = EXCLUDED.threshold_max, trigger_value = EXCLUDED.trigger_value
+        RETURNING alert_template_rule_id;
+        """,
+        (alert_template_id, data.metric_name, data.threshold_min, data.threshold_max, data.trigger_value),
+    )
+    rule_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "rule_saved", "alert_template_rule_id": rule_id}
+
+@app.delete("/alert_templates/{alert_template_id}/rules/{rule_id}")
+def delete_alert_template_rule(alert_template_id: int, rule_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute("DELETE FROM alert_template_rules WHERE alert_template_rule_id = %s AND alert_template_id = %s;", (rule_id, alert_template_id))
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "rule_deleted", "alert_template_rule_id": rule_id}
+
+
+# =====================================================================================
+# Alert Rules CRUD (per-device, direct editing — the thing you asked for explicitly)
+# =====================================================================================
+
+class AlertRuleCreate(BaseModel):
+    serial_number: str
+    metric_name: str
+    threshold_min: float | None = None
+    threshold_max: float | None = None
+    trigger_value: bool | None = None
+
+def get_device_org_and_site(cur, serial_number: str):
+    """Returns (org_id, site_id) for whichever of gateways/sensors owns this serial, or None."""
+    cur.execute("SELECT org_id, site_id FROM gateways WHERE serial_number = %s;", (serial_number,))
+    row = cur.fetchone()
+    if row:
+        return row
+    cur.execute("SELECT org_id, site_id FROM sensors WHERE serial_number = %s;", (serial_number,))
+    return cur.fetchone()
+
+def require_device_admin(cur, current_user: User, org_id: int, site_id: int | None):
+    if org_id != current_user.org_id:
+        raise HTTPException(status_code=403, detail="Device belongs to another organisation")
+    if site_id is not None:
+        require_site_access(cur, current_user, current_user.org_id, site_id, admin=True)
+    else:
+        require_org_access(cur, current_user, admin=True)
+
+@app.post("/alert_rules")
+def create_alert_rule(data: AlertRuleCreate, current_user: User = Depends(get_current_user)):
+    validate_alert_rule_shape(data.threshold_min, data.threshold_max, data.trigger_value)
+    conn = get_db(); cur = conn.cursor()
+    device = get_device_org_and_site(cur, data.serial_number)
+    if not device:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found")
+    require_device_admin(cur, current_user, device[0], device[1])
+    cur.execute(
+        """
+        INSERT INTO alert_rules (serial_number, metric_name, threshold_min, threshold_max, trigger_value, created_by)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (serial_number, metric_name) WHERE is_active = TRUE DO UPDATE
+        SET threshold_min = EXCLUDED.threshold_min, threshold_max = EXCLUDED.threshold_max, trigger_value = EXCLUDED.trigger_value
+        RETURNING alert_rule_id;
+        """,
+        (data.serial_number, data.metric_name, data.threshold_min, data.threshold_max, data.trigger_value, current_user.user_id),
+    )
+    rule_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "alert_rule_saved", "alert_rule_id": rule_id}
+
+@app.get("/alert_rules")
+def list_alert_rules(serial_number: str, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    device = get_device_org_and_site(cur, serial_number)
+    if not device or device[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found")
+    cur.execute(
+        "SELECT alert_rule_id, metric_name, threshold_min, threshold_max, trigger_value, is_active FROM alert_rules WHERE serial_number = %s;",
+        (serial_number,),
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"alert_rules": [
+        {"alert_rule_id": r[0], "metric_name": r[1], "threshold_min": r[2], "threshold_max": r[3], "trigger_value": r[4], "is_active": r[5]}
+        for r in rows
+    ]}
+
+@app.delete("/alert_rules/{alert_rule_id}")
+def delete_alert_rule(alert_rule_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT serial_number FROM alert_rules WHERE alert_rule_id = %s;", (alert_rule_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Alert rule not found")
+    device = get_device_org_and_site(cur, row[0])
+    if not device:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found")
+    require_device_admin(cur, current_user, device[0], device[1])
+    cur.execute("UPDATE alert_rules SET is_active = FALSE WHERE alert_rule_id = %s;", (alert_rule_id,))
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "alert_rule_deleted", "alert_rule_id": alert_rule_id}
+
+
+# =====================================================================================
+# MCU catalog CRUD (mcu_variants, mcu_variant_gpio_pins, module_mcu_compatibility)
+# =====================================================================================
+# These three tables are GLOBAL/factory reference data (no org_id column at all — they
+# describe hardware, not any one org's deployment), so mutations require the dedicated
+# 'watchdog_admin' platform role (require_platform_admin), not an ordinary org's Global
+# Admin. Needs db_migration_003.sql applied. Reads stay open to any authenticated user
+# (needed to populate node-template dropdowns etc).
+
+class McuVariantCreate(BaseModel):
+    name: str
+
+@app.post("/mcu_variants")
+def create_mcu_variant(data: McuVariantCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute("INSERT INTO mcu_variants (name) VALUES (%s) RETURNING mcu_variant_id;", (data.name,))
+    mcu_variant_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "mcu_variant_created", "mcu_variant_id": mcu_variant_id}
+
+@app.get("/mcu_variants")
+def list_mcu_variants(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT mcu_variant_id, name FROM mcu_variants ORDER BY name;")
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"mcu_variants": [{"mcu_variant_id": r[0], "name": r[1]} for r in rows]}
+
+class GpioPinCreate(BaseModel):
+    gpio_pin: str
+    status: str = "available"  # 'available' | 'reserved' | 'restricted'
+    notes: str | None = None
+
+@app.post("/mcu_variants/{mcu_variant_id}/gpio_pins")
+def add_gpio_pin(mcu_variant_id: int, data: GpioPinCreate, current_user: User = Depends(get_current_user)):
+    if data.status not in ("available", "reserved", "restricted"):
+        raise HTTPException(status_code=400, detail="status must be 'available', 'reserved', or 'restricted'")
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        """
+        INSERT INTO mcu_variant_gpio_pins (mcu_variant_id, gpio_pin, status, notes)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (mcu_variant_id, gpio_pin) DO UPDATE SET status = EXCLUDED.status, notes = EXCLUDED.notes
+        RETURNING mcu_variant_gpio_pin_id;
+        """,
+        (mcu_variant_id, data.gpio_pin, data.status, data.notes),
+    )
+    pin_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "gpio_pin_saved", "mcu_variant_gpio_pin_id": pin_id}
+
+@app.get("/mcu_variants/{mcu_variant_id}/gpio_pins")
+def list_gpio_pins(mcu_variant_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT mcu_variant_gpio_pin_id, gpio_pin, status, notes FROM mcu_variant_gpio_pins WHERE mcu_variant_id = %s;",
+        (mcu_variant_id,),
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"gpio_pins": [{"mcu_variant_gpio_pin_id": r[0], "gpio_pin": r[1], "status": r[2], "notes": r[3]} for r in rows]}
+
+class ModuleCompatibilityCreate(BaseModel):
+    module_type_id: int
+    mcu_variant_id: int
+
+@app.post("/module_mcu_compatibility")
+def add_module_compatibility(data: ModuleCompatibilityCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        "INSERT INTO module_mcu_compatibility (module_type_id, mcu_variant_id) VALUES (%s, %s) ON CONFLICT DO NOTHING;",
+        (data.module_type_id, data.mcu_variant_id),
+    )
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "compatibility_added"}
+
+@app.get("/module_mcu_compatibility")
+def list_module_compatibility(mcu_variant_id: int | None = None, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    if mcu_variant_id is not None:
+        cur.execute("SELECT module_type_id, mcu_variant_id FROM module_mcu_compatibility WHERE mcu_variant_id = %s;", (mcu_variant_id,))
+    else:
+        cur.execute("SELECT module_type_id, mcu_variant_id FROM module_mcu_compatibility;")
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"compatibility": [{"module_type_id": r[0], "mcu_variant_id": r[1]} for r in rows]}
+
+@app.delete("/module_mcu_compatibility")
+def delete_module_compatibility(module_type_id: int, mcu_variant_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        "DELETE FROM module_mcu_compatibility WHERE module_type_id = %s AND mcu_variant_id = %s;",
+        (module_type_id, mcu_variant_id),
+    )
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "compatibility_removed"}

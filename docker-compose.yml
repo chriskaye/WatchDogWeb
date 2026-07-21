@@ -45,6 +45,24 @@ services:
     depends_on:
       - db
 
+  scheduler:
+    image: watchdogweb-api:latest
+    build: ./api
+    volumes:
+      - ./api:/app
+    working_dir: /app
+    environment:
+    - DB_HOST=${DB_HOST}
+    - DB_PORT=${DB_PORT}
+    - DB_USER=${DB_USER}
+    - DB_PASSWORD=${DB_PASSWORD}
+    - DB_NAME=${DB_NAME}
+    command: >
+      bash -c "pip install -r requirements.txt && python scheduler.py"
+    depends_on:
+      - db
+      - api
+
   sensor_simulator:
     image: python:3.12
     volumes:
