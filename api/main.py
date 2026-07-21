@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import psycopg2
 from datetime import datetime, timedelta
@@ -87,6 +88,13 @@ class User(BaseModel):
     email: str
     org_id: int
     is_verified: bool
+    is_watchdog_admin: bool = False
+    # Support Access impersonation context — default False/None for every normal login.
+    # Only set when get_current_user() resolves a support-view token (see Support Access
+    # section below). is_support_session gates the mutation-blocking middleware;
+    # support_admin_id is who to actually attribute actions/logs to during the session.
+    is_support_session: bool = False
+    support_admin_id: int | None = None
 
 class UserCreate(BaseModel):
     email: str
@@ -107,6 +115,12 @@ class InviteUser(BaseModel):
                                           # same channel the invite itself was sent through).
                                           # If omitted, the invited user sets their own password
                                           # after verifying their email.
+    grant_watchdog_admin: bool = False   # sets users.is_watchdog_admin on the new account.
+                                          # Only usable by an existing watchdog_admin — checked
+                                          # in invite_user() below, in addition to the normal
+                                          # site_id-based check for `role`. This is how a
+                                          # platform admin actually provisions a colleague as
+                                          # one, per your question — nothing else could do it.
 
 class LinkSSO(BaseModel):
     provider: str  # 'google', 'microsoft', 'x'
@@ -170,7 +184,7 @@ def get_user_by_email(email: str):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "SELECT user_id, email, org_id, is_verified, password_hash, is_locked, is_suspended, suspend_reason FROM users WHERE email = %s;",
+        "SELECT user_id, email, org_id, is_verified, password_hash, is_locked, is_suspended, suspend_reason, is_watchdog_admin FROM users WHERE email = %s;",
         (email,),
     )
     row = cur.fetchone()
@@ -178,8 +192,8 @@ def get_user_by_email(email: str):
     conn.close()
     if not row:
         return None
-    user_id, email, org_id, is_verified, password_hash, is_locked, is_suspended, suspend_reason = row
-    user = User(user_id=user_id, email=email, org_id=org_id, is_verified=is_verified)
+    user_id, email, org_id, is_verified, password_hash, is_locked, is_suspended, suspend_reason, is_watchdog_admin = row
+    user = User(user_id=user_id, email=email, org_id=org_id, is_verified=is_verified, is_watchdog_admin=is_watchdog_admin)
     return user, password_hash, is_locked, is_suspended, suspend_reason
 
 def get_user_by_id(user_id: int):
@@ -189,7 +203,7 @@ def get_user_by_id(user_id: int):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "SELECT user_id, email, org_id, is_verified, sessions_invalidated_at FROM users WHERE user_id = %s;",
+        "SELECT user_id, email, org_id, is_verified, sessions_invalidated_at, is_watchdog_admin FROM users WHERE user_id = %s;",
         (user_id,),
     )
     row = cur.fetchone()
@@ -197,9 +211,51 @@ def get_user_by_id(user_id: int):
     conn.close()
     if not row:
         return None
-    uid, email, org_id, is_verified, sessions_invalidated_at = row
-    user = User(user_id=uid, email=email, org_id=org_id, is_verified=is_verified)
+    uid, email, org_id, is_verified, sessions_invalidated_at, is_watchdog_admin = row
+    user = User(user_id=uid, email=email, org_id=org_id, is_verified=is_verified, is_watchdog_admin=is_watchdog_admin)
     return user, sessions_invalidated_at
+
+def _resolve_support_view_user(payload: dict) -> User:
+    """Resolves a support-view token into a User representing the TARGET user (so every
+    existing endpoint scopes data correctly with zero call-site changes), but stamps on
+    is_support_session/support_admin_id so logging/middleware can tell the difference.
+    Deliberately does NOT apply the target's own lock/suspend/sessions_invalidated_at
+    checks — support access is admin-initiated and independent of the target's own
+    session state (a support session should still work even if the target user is, say,
+    mid-password-reset with their own sessions invalidated)."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    admin_id = payload.get("admin_id")
+    target_user_id = payload.get("target_user_id")
+    grant_id = payload.get("grant_id")
+    session_id = payload.get("session_id")
+    if not all([admin_id, target_user_id, grant_id, session_id]):
+        raise credentials_exception
+
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT 1 FROM support_access_grants WHERE grant_id = %s AND user_id = %s AND expires_at > NOW() AND revoked_at IS NULL;",
+        (grant_id, target_user_id),
+    )
+    grant_ok = cur.fetchone() is not None
+    cur.execute("SELECT ended_at FROM support_access_sessions WHERE session_id = %s;", (session_id,))
+    srow = cur.fetchone()
+    cur.close(); conn.close()
+    session_ok = srow is not None and srow[0] is None
+
+    if not (grant_ok and session_ok):
+        raise HTTPException(status_code=401, detail="Support Access session has ended or expired")
+
+    result = get_user_by_id(int(target_user_id))
+    if result is None:
+        raise credentials_exception
+    target_user, _sessions_invalidated_at = result
+    target_user.is_support_session = True
+    target_user.support_admin_id = int(admin_id)
+    return target_user
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     credentials_exception = HTTPException(
@@ -209,13 +265,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise credentials_exception
+
+    if payload.get("typ") == "support_view":
+        return _resolve_support_view_user(payload)
+
+    try:
         user_id = payload.get("sub")
         issued_at = payload.get("iat")
         if user_id is None or issued_at is None:
             raise credentials_exception
         user_id = int(user_id)  # sub is always a string in the token; cast back for the DB lookup
         issued_at = datetime.utcfromtimestamp(issued_at)
-    except (JWTError, ValueError):
+    except ValueError:
         raise credentials_exception
 
     result = get_user_by_id(user_id)
@@ -234,6 +297,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     if not user.is_verified:
         raise HTTPException(status_code=403, detail="Email not verified")
     return user
+
+# --- Support Access: block any mutation made under a support-view token, at the
+# transport layer, so it's a structural guarantee rather than something every route
+# handler has to remember to check. Normal tokens are completely unaffected — this only
+# ever fires for requests bearing a token whose payload decodes with typ=="support_view".
+@app.middleware("http")
+async def block_support_session_mutations(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            try:
+                payload = jwt.decode(auth[7:], SECRET_KEY, algorithms=[ALGORITHM])
+                if payload.get("typ") == "support_view":
+                    return JSONResponse(
+                        status_code=403,
+                        content={"detail": "Support Access sessions are read-only"},
+                    )
+            except JWTError:
+                pass  # not a valid token at all — let the route's own auth dependency reject it as usual
+    return await call_next(request)
 
 # --- Access control (user_site_roles / role_hierarchy) ---
 #
@@ -337,9 +420,12 @@ def log_event(cur, org_id: int, event_type: str, actor_user_id: int | None,
 
 def require_org_admin(cur, user: User):
     """Global-Admin-or-higher only (org-wide actions: backups settings, org GDPR deletion,
-    etc). Rank-based rather than a literal 'global_admin' string match, so watchdog_admin
-    (rank 5, above global_admin's rank 4) automatically qualifies too without needing every
-    ACL check updated by hand whenever a new higher-ranked role is added."""
+    etc). Rank-based rather than a literal 'global_admin' string match — was originally
+    written this way so watchdog_admin (formerly a rank-5 site_role value) would inherit
+    global_admin's powers automatically. That role no longer exists (replaced by the
+    users.is_watchdog_admin flag, see require_platform_admin), so this is now equivalent to
+    a plain global_admin check, but left rank-based since it's still correct and costs
+    nothing extra."""
     if get_user_best_rank(cur, user.user_id) < get_role_rank(cur, "global_admin"):
         raise HTTPException(status_code=403, detail="Global Admin permission required")
 
@@ -385,13 +471,16 @@ def require_site_access(cur, user: User, org_id: int, site_id: int, admin: bool 
 
 def require_platform_admin(cur, user: User):
     """Gate for the shared/global hardware catalog (mcu_variants, mcu_variant_gpio_pins,
-    module_mcu_compatibility) — these tables have no org_id, so an ordinary org's Global
-    Admin must NOT be able to edit them (that was the gap flagged previously). Requires
-    the literal 'watchdog_admin' role specifically, not just "outranks global_admin" —
-    intentionally not rank-based like require_org_admin, since this isn't "more senior
-    within an org", it's "WatchDog platform staff", a different axis entirely.
-    Needs db_migration_003.sql applied (adds the 'watchdog_admin' enum value + rank)."""
-    if get_global_role(cur, user.user_id) != "watchdog_admin":
+    module_mcu_compatibility, device_registry, sensor_module_types, and Support Access
+    admin actions). Checks the flat users.is_watchdog_admin flag directly — deliberately
+    NOT rank-based like require_org_admin, and no longer tied to user_site_roles/
+    role_hierarchy at all (the old 'watchdog_admin' site_role + rank-5 role_hierarchy row
+    have been removed from the schema). This is intentional: platform-staff status and
+    org-level rank are different axes entirely, and a flat flag makes it structurally
+    impossible for platform access to leak into org-scoped authorization by accident —
+    unlike the old rank-based version, which was only safe because every org-scoped check
+    happened to also verify target_org_id == actor.org_id independently."""
+    if not user.is_watchdog_admin:
         raise HTTPException(status_code=403, detail="WatchDog platform admin permission required")
 
 # --- Sending Email stub
@@ -475,16 +564,17 @@ def create_org_and_owner(email: str, password_hash: str | None, provider: str | 
     return user_id
 
 def create_unverified_user_in_org(email: str, org_id: int, role: str, site_id: int | None,
-                                   granted_by: int, password_hash: str | None = None):
+                                   granted_by: int, password_hash: str | None = None,
+                                   is_watchdog_admin: bool = False):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         """
-        INSERT INTO users (email, is_verified, org_id, password_hash)
-        VALUES (%s, FALSE, %s, %s)
+        INSERT INTO users (email, is_verified, org_id, password_hash, is_watchdog_admin)
+        VALUES (%s, FALSE, %s, %s, %s)
         RETURNING user_id;
         """,
-        (email, org_id, password_hash),
+        (email, org_id, password_hash, is_watchdog_admin),
     )
     user_id = cur.fetchone()[0]
 
@@ -716,11 +806,10 @@ def ingest(data: IngestPayload):
 
 @app.post("/users/invite") # users invited by org admins
 def invite_user(data: InviteUser, current_user: User = Depends(get_current_user)):
-    # 'watchdog_admin' deliberately excluded — it's a WatchDog platform-staff role, not an
-    # org-level grant, and letting any org's Global Admin hand it out via a normal invite
-    # would let them grant themselves/anyone platform-wide catalog access. Assign it
-    # directly via SQL (see db_migration_003.sql) until/unless a dedicated privileged
-    # mechanism for it is built.
+    # 'watchdog_admin' is no longer a site_role at all (it's the flat users.is_watchdog_admin
+    # flag now — see require_platform_admin), so it was never a candidate for this whitelist
+    # in the first place. Kept the explicit rejection anyway since InviteUser.role is
+    # arbitrary user input, not something we should trust to already exclude it.
     if data.role not in ("global_admin", "site_admin", "global_viewer", "site_viewer"):
         raise HTTPException(status_code=400, detail="Invalid role")
 
@@ -735,6 +824,11 @@ def invite_user(data: InviteUser, current_user: User = Depends(get_current_user)
 
     conn = get_db()
     cur = conn.cursor()
+
+    if data.grant_watchdog_admin:
+        # Only an existing platform admin can provision a colleague as one — this is the
+        # entire answer to "how does a new WatchDog admin ever get made".
+        require_platform_admin(cur, current_user)
 
     if is_global:
         require_org_admin(cur, current_user)
@@ -751,9 +845,14 @@ def invite_user(data: InviteUser, current_user: User = Depends(get_current_user)
 
     initial_hash = get_password_hash(data.initial_password) if data.initial_password else None
     user_id = create_unverified_user_in_org(
-        data.email, current_user.org_id, data.role, data.site_id, current_user.user_id, initial_hash
+        data.email, current_user.org_id, data.role, data.site_id, current_user.user_id,
+        initial_hash, data.grant_watchdog_admin,
     )
-    return {"status": "invited", "user_id": user_id, "password_preset": initial_hash is not None}
+    return {
+        "status": "invited", "user_id": user_id,
+        "password_preset": initial_hash is not None,
+        "watchdog_admin_granted": data.grant_watchdog_admin,
+    }
 
 # add this endpoint, e.g. near list_auth_methods
 @app.get("/users/me", response_model=User)
@@ -764,13 +863,18 @@ def get_me(current_user: User = Depends(get_current_user)):
 def get_my_roles(current_user: User = Depends(get_current_user)):
     """Frontend needs this to decide what to render — there was no way to know the
     logged-in user's role(s) after User dropped its flat `role` field for the site-scoped
-    model. Returns the global (org-wide) role if any, plus every site-scoped role held."""
+    model. Returns the global (org-wide) role if any, every site-scoped role held, and
+    whether they're a WatchDog platform admin (separate axis — see require_platform_admin)."""
     conn = get_db(); cur = conn.cursor()
     global_role = get_global_role(cur, current_user.user_id)
     cur.execute("SELECT site_id, role FROM user_site_roles WHERE user_id = %s AND site_id IS NOT NULL;", (current_user.user_id,))
     site_roles = [{"site_id": r[0], "role": r[1]} for r in cur.fetchall()]
     cur.close(); conn.close()
-    return {"global_role": global_role, "site_roles": site_roles}
+    return {
+        "global_role": global_role,
+        "site_roles": site_roles,
+        "is_watchdog_admin": current_user.is_watchdog_admin,
+    }
 
 @app.get("/users")
 def list_org_users(current_user: User = Depends(get_current_user)):
@@ -2179,11 +2283,182 @@ def delete_node_template(node_template_id: int, current_user: User = Depends(get
     conn.commit(); cur.close(); conn.close()
     return {"status": "node_template_deleted", "node_template_id": node_template_id}
 
-# NOTE: node_template_module_pins / node_template_module_gpio_pins (assigning specific
-# Sensor Modules + GPIO pins to a template) are NOT covered here — that's a nested editor
-# on top of this, not built this pass. The mcu_variant_gpio_pins reserved/restricted
-# validation you asked for (agreed) belongs there once it exists; flagging rather than
-# building it against nothing.
+
+# =====================================================================================
+# Node Template — Sensor Module + GPIO pin assignment (nested editor)
+# =====================================================================================
+# Previously flagged as parked/not-built; built now as part of the WatchDog Employee
+# Portal work, since sensor_module_types now needs somewhere for its entries to actually
+# be *used* by an org, and the GPIO reserved/restricted validation you asked for has
+# nowhere to live without this existing.
+
+class ModulePinAssignmentCreate(BaseModel):
+    module_type_id: int
+    i2c_address_override: str | None = None
+
+@app.post("/node_templates/{node_template_id}/module_pins")
+def add_module_pin_assignment(node_template_id: int, data: ModulePinAssignmentCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT org_id FROM node_templates WHERE node_template_id = %s;", (node_template_id,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Node template not found")
+    if row[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=403, detail="Node template belongs to another organisation")
+    require_org_admin(cur, current_user)
+    cur.execute(
+        """
+        INSERT INTO node_template_module_pins (node_template_id, module_type_id, i2c_address_override)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (node_template_id, module_type_id) DO UPDATE SET i2c_address_override = EXCLUDED.i2c_address_override
+        RETURNING node_template_module_pin_id;
+        """,
+        (node_template_id, data.module_type_id, data.i2c_address_override),
+    )
+    pin_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "module_pin_assigned", "node_template_module_pin_id": pin_id}
+
+@app.get("/node_templates/{node_template_id}/module_pins")
+def list_module_pin_assignments(node_template_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT org_id FROM node_templates WHERE node_template_id = %s;", (node_template_id,))
+    row = cur.fetchone()
+    if not row or row[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Node template not found")
+    cur.execute(
+        "SELECT node_template_module_pin_id, module_type_id, i2c_address_override FROM node_template_module_pins WHERE node_template_id = %s;",
+        (node_template_id,),
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"module_pins": [
+        {"node_template_module_pin_id": r[0], "module_type_id": r[1], "i2c_address_override": r[2]}
+        for r in rows
+    ]}
+
+@app.delete("/node_templates/{node_template_id}/module_pins/{pin_id}")
+def delete_module_pin_assignment(node_template_id: int, pin_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT org_id FROM node_templates WHERE node_template_id = %s;", (node_template_id,))
+    row = cur.fetchone()
+    if not row or row[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Node template not found")
+    require_org_admin(cur, current_user)
+    # ON DELETE CASCADE on node_template_module_gpio_pins cleans up any GPIO assignments too
+    cur.execute(
+        "DELETE FROM node_template_module_pins WHERE node_template_module_pin_id = %s AND node_template_id = %s;",
+        (pin_id, node_template_id),
+    )
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "module_pin_deleted", "node_template_module_pin_id": pin_id}
+
+class GpioAssignmentCreate(BaseModel):
+    pin_role: str
+    gpio_pin: str
+
+@app.post("/node_templates/module_pins/{pin_id}/gpio_pins")
+def add_gpio_assignment(pin_id: int, data: GpioAssignmentCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    # Resolve org via node_template_module_pins -> node_templates, and mcu_variant_id via
+    # node_templates -> mcu_variant_id, to validate the pin against that MCU's GPIO catalog.
+    cur.execute(
+        """
+        SELECT nt.org_id, nt.mcu_variant_id
+        FROM node_template_module_pins ntmp
+        JOIN node_templates nt ON nt.node_template_id = ntmp.node_template_id
+        WHERE ntmp.node_template_module_pin_id = %s;
+        """,
+        (pin_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Module pin assignment not found")
+    org_id, mcu_variant_id = row
+    if org_id != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=403, detail="Belongs to another organisation")
+    require_org_admin(cur, current_user)
+
+    # Validation gap closed: reject reserved/restricted pins for this MCU variant.
+    cur.execute(
+        "SELECT status FROM mcu_variant_gpio_pins WHERE mcu_variant_id = %s AND gpio_pin = %s;",
+        (mcu_variant_id, data.gpio_pin),
+    )
+    pin_row = cur.fetchone()
+    if pin_row and pin_row[0] in ("reserved", "restricted"):
+        cur.close(); conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail=f"GPIO pin '{data.gpio_pin}' is {pin_row[0]} on this MCU variant and cannot be assigned",
+        )
+    # NOTE: a pin with no row at all in mcu_variant_gpio_pins is allowed through — that
+    # table isn't guaranteed to be exhaustively populated for every pin on every variant,
+    # so "unlisted" is treated as "no constraint on record" rather than "forbidden".
+
+    cur.execute(
+        """
+        INSERT INTO node_template_module_gpio_pins (node_template_module_pin_id, pin_role, gpio_pin)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (node_template_module_pin_id, pin_role) DO UPDATE SET gpio_pin = EXCLUDED.gpio_pin
+        RETURNING node_template_module_gpio_pin_id;
+        """,
+        (pin_id, data.pin_role, data.gpio_pin),
+    )
+    gpio_assignment_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "gpio_assigned", "node_template_module_gpio_pin_id": gpio_assignment_id}
+
+@app.get("/node_templates/module_pins/{pin_id}/gpio_pins")
+def list_gpio_assignments(pin_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT nt.org_id FROM node_template_module_pins ntmp
+        JOIN node_templates nt ON nt.node_template_id = ntmp.node_template_id
+        WHERE ntmp.node_template_module_pin_id = %s;
+        """,
+        (pin_id,),
+    )
+    row = cur.fetchone()
+    if not row or row[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Module pin assignment not found")
+    cur.execute(
+        "SELECT node_template_module_gpio_pin_id, pin_role, gpio_pin FROM node_template_module_gpio_pins WHERE node_template_module_pin_id = %s;",
+        (pin_id,),
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"gpio_assignments": [{"node_template_module_gpio_pin_id": r[0], "pin_role": r[1], "gpio_pin": r[2]} for r in rows]}
+
+@app.delete("/node_templates/module_pins/{pin_id}/gpio_pins/{gpio_assignment_id}")
+def delete_gpio_assignment(pin_id: int, gpio_assignment_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT nt.org_id FROM node_template_module_pins ntmp
+        JOIN node_templates nt ON nt.node_template_id = ntmp.node_template_id
+        WHERE ntmp.node_template_module_pin_id = %s;
+        """,
+        (pin_id,),
+    )
+    row = cur.fetchone()
+    if not row or row[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Module pin assignment not found")
+    require_org_admin(cur, current_user)
+    cur.execute(
+        "DELETE FROM node_template_module_gpio_pins WHERE node_template_module_gpio_pin_id = %s AND node_template_module_pin_id = %s;",
+        (gpio_assignment_id, pin_id),
+    )
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "gpio_assignment_deleted", "node_template_module_gpio_pin_id": gpio_assignment_id}
 
 
 # =====================================================================================
@@ -2370,9 +2645,9 @@ def delete_alert_rule(alert_rule_id: int, current_user: User = Depends(get_curre
 # =====================================================================================
 # These three tables are GLOBAL/factory reference data (no org_id column at all — they
 # describe hardware, not any one org's deployment), so mutations require the dedicated
-# 'watchdog_admin' platform role (require_platform_admin), not an ordinary org's Global
-# Admin. Needs db_migration_003.sql applied. Reads stay open to any authenticated user
-# (needed to populate node-template dropdowns etc).
+# users.is_watchdog_admin flag (require_platform_admin), not an ordinary org's Global
+# Admin. Reads stay open to any authenticated user (needed to populate node-template
+# dropdowns etc).
 
 class McuVariantCreate(BaseModel):
     name: str
@@ -2465,3 +2740,384 @@ def delete_module_compatibility(module_type_id: int, mcu_variant_id: int, curren
     )
     conn.commit(); cur.close(); conn.close()
     return {"status": "compatibility_removed"}
+
+
+# =====================================================================================
+# WatchDog Employee Portal — device_registry CRUD
+# =====================================================================================
+# Previously "no endpoint exists at all, by original design (factory data, no org admin
+# should fabricate it)". Now built, gated by require_platform_admin (is_watchdog_admin
+# flag) rather than any org-level role, matching that original design intent — this is
+# WatchDog-staff-only, not exposed to any customer org regardless of their role there.
+
+class DeviceRegistryCreate(BaseModel):
+    serial_number: str
+    device_type: str  # 'gateway' or 'sensor'
+    model: str | None = None
+    mcu_variant_id: int | None = None
+    flash_kb: int | None = None
+    psram_kb: int | None = None
+    ram_kb: int | None = None
+
+@app.post("/device_registry")
+def create_device_registry_entry(data: DeviceRegistryCreate, current_user: User = Depends(get_current_user)):
+    if data.device_type not in ("gateway", "sensor"):
+        raise HTTPException(status_code=400, detail="device_type must be 'gateway' or 'sensor'")
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        """
+        INSERT INTO device_registry (serial_number, device_type, model, mcu_variant_id, flash_kb, psram_kb, ram_kb)
+        VALUES (%s, %s, %s, %s, %s, %s, %s);
+        """,
+        (data.serial_number, data.device_type, data.model, data.mcu_variant_id,
+         data.flash_kb, data.psram_kb, data.ram_kb),
+    )
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "device_registered", "serial_number": data.serial_number}
+
+@app.get("/device_registry")
+def list_device_registry(is_provisioned: bool | None = None, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    if is_provisioned is not None:
+        cur.execute(
+            "SELECT serial_number, device_type, model, mcu_variant_id, is_provisioned, provisioned_at FROM device_registry WHERE is_provisioned = %s ORDER BY serial_number;",
+            (is_provisioned,),
+        )
+    else:
+        cur.execute(
+            "SELECT serial_number, device_type, model, mcu_variant_id, is_provisioned, provisioned_at FROM device_registry ORDER BY serial_number;"
+        )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"devices": [
+        {"serial_number": r[0], "device_type": r[1], "model": r[2], "mcu_variant_id": r[3],
+         "is_provisioned": r[4], "provisioned_at": r[5].isoformat() if r[5] else None}
+        for r in rows
+    ]}
+
+@app.get("/device_registry/{serial_number}")
+def get_device_registry_entry(serial_number: str, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        "SELECT serial_number, device_type, model, mcu_variant_id, flash_kb, psram_kb, ram_kb, is_provisioned, provisioned_at FROM device_registry WHERE serial_number = %s;",
+        (serial_number,),
+    )
+    row = cur.fetchone()
+    cur.close(); conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Device not found in registry")
+    return {
+        "serial_number": row[0], "device_type": row[1], "model": row[2], "mcu_variant_id": row[3],
+        "flash_kb": row[4], "psram_kb": row[5], "ram_kb": row[6],
+        "is_provisioned": row[7], "provisioned_at": row[8].isoformat() if row[8] else None,
+    }
+
+class DeviceRegistryUpdate(BaseModel):
+    model: str | None = None
+    mcu_variant_id: int | None = None
+    flash_kb: int | None = None
+    psram_kb: int | None = None
+    ram_kb: int | None = None
+
+@app.patch("/device_registry/{serial_number}")
+def update_device_registry_entry(serial_number: str, data: DeviceRegistryUpdate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute("SELECT is_provisioned FROM device_registry WHERE serial_number = %s;", (serial_number,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found in registry")
+    if row[0]:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Cannot edit factory specs after a device has been provisioned")
+    fields, values = [], []
+    for col in ("model", "mcu_variant_id", "flash_kb", "psram_kb", "ram_kb"):
+        v = getattr(data, col)
+        if v is not None:
+            fields.append(f"{col} = %s")
+            values.append(v)
+    if fields:
+        values.append(serial_number)
+        cur.execute(f"UPDATE device_registry SET {', '.join(fields)} WHERE serial_number = %s;", values)
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "device_updated", "serial_number": serial_number}
+
+@app.delete("/device_registry/{serial_number}")
+def delete_device_registry_entry(serial_number: str, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute("SELECT is_provisioned FROM device_registry WHERE serial_number = %s;", (serial_number,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found in registry")
+    if row[0]:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Cannot delete a provisioned device from the registry — deprovision it first")
+    cur.execute("DELETE FROM device_registry WHERE serial_number = %s;", (serial_number,))
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "device_deleted", "serial_number": serial_number}
+
+class DeviceRadioCreate(BaseModel):
+    radio_type: str
+    mac_address: str | None = None
+
+@app.post("/device_registry/{serial_number}/radios")
+def add_device_radio(serial_number: str, data: DeviceRadioCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute("SELECT 1 FROM device_registry WHERE serial_number = %s;", (serial_number,))
+    if not cur.fetchone():
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found in registry")
+    cur.execute(
+        "INSERT INTO device_radios (serial_number, radio_type, mac_address) VALUES (%s, %s, %s) RETURNING device_radio_id;",
+        (serial_number, data.radio_type, data.mac_address),
+    )
+    radio_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "radio_added", "device_radio_id": radio_id}
+
+@app.get("/device_registry/{serial_number}/radios")
+def list_device_radios(serial_number: str, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        "SELECT device_radio_id, radio_type, mac_address FROM device_radios WHERE serial_number = %s;",
+        (serial_number,),
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"radios": [{"device_radio_id": r[0], "radio_type": r[1], "mac_address": r[2]} for r in rows]}
+
+@app.delete("/device_registry/{serial_number}/radios/{device_radio_id}")
+def delete_device_radio(serial_number: str, device_radio_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute("DELETE FROM device_radios WHERE device_radio_id = %s AND serial_number = %s;", (device_radio_id, serial_number))
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "radio_deleted", "device_radio_id": device_radio_id}
+
+
+# =====================================================================================
+# WatchDog Employee Portal — sensor_module_types CRUD
+# =====================================================================================
+
+class SensorModuleTypeCreate(BaseModel):
+    module_type: str  # short/unique code, e.g. 'temp_humidity_v2'
+    name: str         # display name
+    communication_type: str | None = None
+    default_i2c_address: str | None = None
+
+@app.post("/sensor_module_types")
+def create_sensor_module_type(data: SensorModuleTypeCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        """
+        INSERT INTO sensor_module_types (module_type, name, communication_type, default_i2c_address)
+        VALUES (%s, %s, %s, %s) RETURNING module_type_id;
+        """,
+        (data.module_type, data.name, data.communication_type, data.default_i2c_address),
+    )
+    module_type_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "module_type_created", "module_type_id": module_type_id}
+
+@app.get("/sensor_module_types")
+def list_sensor_module_types(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT module_type_id, module_type, name, communication_type, default_i2c_address FROM sensor_module_types ORDER BY name;")
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"module_types": [
+        {"module_type_id": r[0], "module_type": r[1], "name": r[2], "communication_type": r[3], "default_i2c_address": r[4]}
+        for r in rows
+    ]}
+
+class SensorModuleTypeUpdate(BaseModel):
+    name: str | None = None
+    communication_type: str | None = None
+    default_i2c_address: str | None = None
+
+@app.patch("/sensor_module_types/{module_type_id}")
+def update_sensor_module_type(module_type_id: int, data: SensorModuleTypeUpdate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    fields, values = [], []
+    for col in ("name", "communication_type", "default_i2c_address"):
+        v = getattr(data, col)
+        if v is not None:
+            fields.append(f"{col} = %s")
+            values.append(v)
+    if not fields:
+        cur.close(); conn.close()
+        return {"status": "no_changes", "module_type_id": module_type_id}
+    values.append(module_type_id)
+    cur.execute(f"UPDATE sensor_module_types SET {', '.join(fields)} WHERE module_type_id = %s;", values)
+    if cur.rowcount == 0:
+        conn.rollback(); cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Module type not found")
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "module_type_updated", "module_type_id": module_type_id}
+
+@app.delete("/sensor_module_types/{module_type_id}")
+def delete_sensor_module_type(module_type_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute("DELETE FROM sensor_module_types WHERE module_type_id = %s;", (module_type_id,))
+    if cur.rowcount == 0:
+        conn.rollback(); cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Module type not found")
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "module_type_deleted", "module_type_id": module_type_id}
+
+
+# =====================================================================================
+# Support Access — opt-in, read-only 24h impersonation for WatchDog support staff
+# =====================================================================================
+# Design note: is_watchdog_admin is a flat flag rather than a rank-based role
+# specifically so platform access and org access stay structurally separate — see
+# require_platform_admin's docstring. Read-only is enforced server-side by the
+# block_support_session_mutations middleware above, not left as a frontend courtesy.
+
+def create_support_view_token(admin_id: int, target_user_id: int, grant_id: int, session_id: int,
+                               expires_minutes: int = 60) -> str:
+    payload = {
+        "typ": "support_view",
+        "admin_id": admin_id,
+        "target_user_id": target_user_id,
+        "grant_id": grant_id,
+        "session_id": session_id,
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(minutes=expires_minutes),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+@app.post("/support-access/enable")
+def enable_support_access(current_user: User = Depends(get_current_user)):
+    """Any user may opt themselves in — this is the user granting WatchDog support staff
+    permission to view (not edit) their org's data for 24h, not an admin action."""
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "SELECT grant_id FROM support_access_grants WHERE user_id = %s AND expires_at > NOW() AND revoked_at IS NULL;",
+        (current_user.user_id,),
+    )
+    if cur.fetchone():
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Support Access is already enabled")
+    expires_at = datetime.utcnow() + timedelta(hours=24)
+    cur.execute(
+        "INSERT INTO support_access_grants (user_id, expires_at) VALUES (%s, %s) RETURNING grant_id;",
+        (current_user.user_id, expires_at),
+    )
+    grant_id = cur.fetchone()[0]
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "enabled", "grant_id": grant_id, "expires_at": expires_at.isoformat()}
+
+@app.post("/support-access/revoke")
+def revoke_support_access(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        "UPDATE support_access_grants SET revoked_at = NOW() WHERE user_id = %s AND expires_at > NOW() AND revoked_at IS NULL;",
+        (current_user.user_id,),
+    )
+    updated = cur.rowcount
+    conn.commit(); cur.close(); conn.close()
+    if updated == 0:
+        raise HTTPException(status_code=400, detail="No active Support Access grant to revoke")
+    return {"status": "revoked"}
+
+@app.get("/support-access/status")
+def support_access_status(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT grant_id, granted_at, expires_at FROM support_access_grants
+        WHERE user_id = %s AND expires_at > NOW() AND revoked_at IS NULL
+        ORDER BY granted_at DESC LIMIT 1;
+        """,
+        (current_user.user_id,),
+    )
+    row = cur.fetchone()
+    cur.close(); conn.close()
+    if not row:
+        return {"enabled": False}
+    grant_id, granted_at, expires_at = row
+    return {"enabled": True, "grant_id": grant_id, "granted_at": granted_at.isoformat(), "expires_at": expires_at.isoformat()}
+
+@app.get("/support-access/grants")
+def list_support_access_grants(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        """
+        SELECT g.grant_id, g.user_id, u.email, u.org_id, g.granted_at, g.expires_at
+        FROM support_access_grants g JOIN users u ON u.user_id = g.user_id
+        WHERE g.expires_at > NOW() AND g.revoked_at IS NULL
+        ORDER BY g.granted_at DESC;
+        """
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"grants": [
+        {"grant_id": r[0], "user_id": r[1], "email": r[2], "org_id": r[3],
+         "granted_at": r[4].isoformat(), "expires_at": r[5].isoformat()}
+        for r in rows
+    ]}
+
+class SupportSessionStart(BaseModel):
+    grant_id: int
+
+@app.post("/support-access/sessions/start")
+def start_support_session(data: SupportSessionStart, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        "SELECT user_id FROM support_access_grants WHERE grant_id = %s AND expires_at > NOW() AND revoked_at IS NULL;",
+        (data.grant_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Grant is not active (expired, revoked, or doesn't exist)")
+    target_user_id = row[0]
+
+    cur.execute(
+        "INSERT INTO support_access_sessions (grant_id, admin_user_id, target_user_id) VALUES (%s, %s, %s) RETURNING session_id;",
+        (data.grant_id, current_user.user_id, target_user_id),
+    )
+    session_id = cur.fetchone()[0]
+
+    cur.execute("SELECT org_id FROM users WHERE user_id = %s;", (target_user_id,))
+    target_org_id = cur.fetchone()[0]
+    log_event(cur, target_org_id, "support_access_session_started", current_user.user_id,
+              "user", str(target_user_id), {"session_id": session_id, "grant_id": data.grant_id})
+    conn.commit(); cur.close(); conn.close()
+
+    support_token = create_support_view_token(current_user.user_id, target_user_id, data.grant_id, session_id)
+    return {"status": "session_started", "session_id": session_id, "support_token": support_token, "token_type": "bearer"}
+
+@app.post("/support-access/sessions/{session_id}/end")
+def end_support_session(session_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        "SELECT target_user_id FROM support_access_sessions WHERE session_id = %s AND admin_user_id = %s AND ended_at IS NULL;",
+        (session_id, current_user.user_id),
+    )
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Session not found, already ended, or not started by you")
+    target_user_id = row[0]
+    cur.execute("UPDATE support_access_sessions SET ended_at = NOW() WHERE session_id = %s;", (session_id,))
+    cur.execute("SELECT org_id FROM users WHERE user_id = %s;", (target_user_id,))
+    target_org_id = cur.fetchone()[0]
+    log_event(cur, target_org_id, "support_access_session_ended", current_user.user_id, "user", str(target_user_id), {"session_id": session_id})
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "session_ended", "session_id": session_id}
