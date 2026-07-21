@@ -1,5 +1,5 @@
 import streamlit as st
-from api_client import login, get_me, ApiError
+from api_client import login, get_me, get_my_roles, ApiError
 
 st.title("Log In")
 
@@ -17,9 +17,11 @@ with st.spinner("Signing in..."):
         token_data = login(email, password)
         access_token = token_data["access_token"]
         user = get_me(access_token)
+        roles = get_my_roles(access_token)
 
         st.session_state.access_token = access_token
         st.session_state.user = user
+        st.session_state.roles = roles
         st.session_state.logged_in = True
         st.session_state.mode = None
         del st.session_state["login_email"]

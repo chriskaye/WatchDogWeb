@@ -50,39 +50,51 @@ if st.session_state.mode is None:
             st.rerun()
 
 # ---------- LOGIN FORM ----------
+# st.form (not bare widgets) is required here: Streamlit only flushes a text_input's
+# in-progress value to session_state on blur, and tabbing between fields doesn't
+# reliably fire that blur in the way clicking away does — the un-committed value silently
+# never reaches Python. A form batches every widget inside it and force-flushes all of
+# them together when the submit button fires, regardless of how focus left the last field.
+# Use this pattern (st.form + st.form_submit_button) for every input screen in this app.
 elif st.session_state.mode == "login":
     st.subheader("Log In")
-    email = st.text_input("Email", key="login_email_input")
-    password = st.text_input("Password", type="password", key="login_password_input")
+    with st.form("login_form", border=False):
+        email = st.text_input("Email", key="login_email_input")
+        password = st.text_input("Password", type="password", key="login_password_input")
 
-    colA, colB = st.columns(2)
-    with colA:
-        if st.button("Submit Login", type="primary", width="stretch"):
-            st.session_state.login_email = email
-            st.session_state.login_password = password
-            st.switch_page("screens/login.py")
-    with colB:
-        if st.button("Cancel", type="secondary", width="stretch"):
-            st.session_state.mode = None
-            st.rerun()
+        colA, colB = st.columns(2)
+        with colA:
+            submitted = st.form_submit_button("Submit Login", type="primary", width="stretch")
+        with colB:
+            cancelled = st.form_submit_button("Cancel", type="secondary", width="stretch")
+
+    if submitted:
+        st.session_state.login_email = email
+        st.session_state.login_password = password
+        st.switch_page("screens/login.py")
+    if cancelled:
+        st.session_state.mode = None
+        st.rerun()
 
 # ---------- CREATE ACCOUNT FORM ----------
 elif st.session_state.mode == "create":
     st.subheader("Create Account")
-    email = st.text_input("Email", key="create_email_input")
-    password = st.text_input("Password", type="password", key="create_password_input")
-    confirm = st.text_input("Confirm Password", type="password", key="create_confirm_input")
+    with st.form("create_account_form", border=False):
+        email = st.text_input("Email", key="create_email_input")
+        password = st.text_input("Password", type="password", key="create_password_input")
+        confirm = st.text_input("Confirm Password", type="password", key="create_confirm_input")
 
-    colA, colB = st.columns(2)
-    with colA:
-        if st.button("Submit Account Creation", type="primary", width="stretch"):
-            print(f"[DEBUG] submit clicked — email={email!r} pw_len={len(password)} confirm_len={len(confirm)}", flush=True)
-            st.session_state.new_email = email
-            st.session_state.new_password = password
-            st.session_state.new_confirm = confirm
-            print(f"[DEBUG] session_state.new_email now = {st.session_state.get('new_email')!r}", flush=True)
-            st.switch_page("screens/create_account.py")
-    with colB:
-        if st.button("Cancel", type="secondary", width="stretch"):
-            st.session_state.mode = None
-            st.rerun()
+        colA, colB = st.columns(2)
+        with colA:
+            submitted = st.form_submit_button("Submit Account Creation", type="primary", width="stretch")
+        with colB:
+            cancelled = st.form_submit_button("Cancel", type="secondary", width="stretch")
+
+    if submitted:
+        st.session_state.new_email = email
+        st.session_state.new_password = password
+        st.session_state.new_confirm = confirm
+        st.switch_page("screens/create_account.py")
+    if cancelled:
+        st.session_state.mode = None
+        st.rerun()

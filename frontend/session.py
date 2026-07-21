@@ -1,4 +1,5 @@
 import streamlit as st
+from api_client import end_support_session, ApiError
 
 
 def init_session_state():
@@ -22,13 +23,26 @@ def init_session_state():
             st.session_state[key] = value
 
 
-def do_logout():
-    """Clears the admin's own auth state, and any support session riding alongside it.
+def get_active_token() -> str | None:
+    """The token every screen/api_client call should use: the support_token when a
+    support session is active, otherwise the admin/user's own access_token. Centralizing
+    this means screens never have to know which one is "current" themselves."""
+    support_session = st.session_state.get("support_session")
+    if support_session:
+        return support_session["support_token"]
+    return st.session_state.get("access_token")
 
-    The actual POST /support-access/sessions/{id}/end call gets wired in once
-    api_client.py grows that endpoint (Phase 2) — for now this only clears local state,
-    which is enough to stop the frontend from acting under a stale support_token.
-    """
+
+def do_logout():
+    """Clears the admin's own auth state, and ends any support session riding alongside
+    it (best-effort — a failed cleanup call shouldn't block the user from logging out)."""
+    support_session = st.session_state.get("support_session")
+    if support_session:
+        try:
+            end_support_session(st.session_state.access_token, support_session["session_id"])
+        except ApiError:
+            pass
+
     st.session_state.logged_in = False
     st.session_state.access_token = None
     st.session_state.user = None
@@ -39,7 +53,12 @@ def do_logout():
 
 def end_support_view():
     """Ends only the active support session — returns a WatchDog admin to their own
-    view without logging them out of their own account. Same caveat as do_logout():
-    the API call to formally end the session lands in Phase 2/15; this clears local
-    state so the frontend stops using the support_token immediately either way."""
+    view without logging them out of their own account."""
+    support_session = st.session_state.get("support_session")
+    if not support_session:
+        return
+    try:
+        end_support_session(st.session_state.access_token, support_session["session_id"])
+    except ApiError:
+        pass
     st.session_state.support_session = None

@@ -68,10 +68,18 @@ services:
     volumes:
       - ./simulator:/app
     working_dir: /app
+    environment:
+    - DB_HOST=${DB_HOST}
+    - DB_PORT=${DB_PORT}
+    - DB_USER=${DB_USER}
+    - DB_PASSWORD=${DB_PASSWORD}
+    - DB_NAME=${DB_NAME}
+    - PYTHONUNBUFFERED=1
     command: >
       bash -c "apt-get update && apt-get upgrade -y && pip install -r requirements.txt && python sim.py"
     depends_on:
       - api
+      - db
 
   db:
     image: postgres:latest
