@@ -298,6 +298,16 @@ def delete_alert_rule(access_token, alert_rule_id):
     return _request("DELETE", f"/alert_rules/{alert_rule_id}", token=access_token)
 
 
+def delete_alert_template(access_token, alert_template_id):
+    return _request("DELETE", f"/alert_templates/{alert_template_id}", token=access_token)
+
+
+def delete_alert_template_rule(access_token, alert_template_id, rule_id):
+    return _request(
+        "DELETE", f"/alert_templates/{alert_template_id}/rules/{rule_id}", token=access_token,
+    )
+
+
 def list_alerts(access_token, serial_number=None, status=None):
     params = {}
     if serial_number:

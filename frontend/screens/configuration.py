@@ -7,8 +7,85 @@ from api_client import (
     list_gateways, list_sensors, soft_delete_gateway, soft_delete_sensor,
     check_device, activate_device, deprovision_device, factory_reset_device,
     list_node_templates, create_node_template, delete_node_template,
-    list_mcu_variants, list_alert_templates,
+    list_mcu_variants,
+    list_alert_templates, create_alert_template, delete_alert_template,
+    add_alert_template_rule, delete_alert_template_rule,
+    list_alert_rules, create_alert_rule, delete_alert_rule,
 )
+
+METRIC_OPTIONS = ["temperature", "humidity", "battery", "motion"]
+
+
+def _metric_threshold_inputs(key_prefix: str):
+    """Shared metric/threshold picker for both Alert Templates and per-device Alert
+    Rules — the backend's validate_alert_rule_shape() requires exactly one of
+    threshold_min/max (numeric metrics) or trigger_value (motion, boolean), never both.
+    Returns (metric_name, threshold_min, threshold_max, trigger_value).
+    """
+    metric_name = st.selectbox("Metric", METRIC_OPTIONS, key=f"{key_prefix}_metric")
+    if metric_name == "motion":
+        trigger_value = st.selectbox("Trigger when motion is", [True, False], key=f"{key_prefix}_trigger")
+        return metric_name, None, None, trigger_value
+    col_a, col_b = st.columns(2)
+    with col_a:
+        threshold_min = st.number_input(
+            "Min (leave at 0 to omit if only using Max)", value=0.0, key=f"{key_prefix}_min",
+        )
+    with col_b:
+        threshold_max = st.number_input(
+            "Max (leave at 0 to omit if only using Min)", value=0.0, key=f"{key_prefix}_max",
+        )
+    # Streamlit's number_input has no clean "unset" state — 0.0 doubles as a real possible
+    # threshold for humidity/battery, so this can't perfectly distinguish "meant zero" from
+    # "left blank". Acceptable trade-off for now; flagged rather than silently assuming.
+    return metric_name, (threshold_min or None), (threshold_max or None), None
+
+
+def _alert_rules_control(serial_number: str, disabled: bool):
+    """Per-device Alert Rules management — list/add/delete, shown inline below the device
+    row when toggled open. Direct rule editing (not template-based)."""
+    key_prefix = f"alert_rules_{serial_number}"
+    if st.button("Alert Rules", key=f"{key_prefix}_open", disabled=disabled):
+        st.session_state[f"{key_prefix}_show"] = not st.session_state.get(f"{key_prefix}_show", False)
+    if st.session_state.get(f"{key_prefix}_show"):
+        try:
+            rules = list_alert_rules(get_active_token(), serial_number).get("alert_rules", [])
+        except ApiError as e:
+            rules = []
+            st.error(f"Could not load alert rules: {e.detail}")
+
+        if not rules:
+            st.caption("No alert rules for this device yet.")
+        else:
+            for r in [x for x in rules if x["is_active"]]:
+                rc1, rc2, rc3 = st.columns([2, 3, 1])
+                with rc1:
+                    st.write(f"**{r['metric_name']}**")
+                with rc2:
+                    if r["metric_name"] == "motion":
+                        st.write(f"Trigger: {r['trigger_value']}")
+                    else:
+                        st.write(f"Min: {r['threshold_min']}, Max: {r['threshold_max']}")
+                with rc3:
+                    if st.button("Delete", key=f"{key_prefix}_del_{r['alert_rule_id']}", disabled=disabled):
+                        try:
+                            delete_alert_rule(get_active_token(), r["alert_rule_id"])
+                            st.rerun()
+                        except ApiError as e:
+                            st.error(f"Could not delete rule: {e.detail}")
+
+        with st.expander("Add alert rule"):
+            metric_name, threshold_min, threshold_max, trigger_value = _metric_threshold_inputs(key_prefix)
+            if st.button("Save Rule", key=f"{key_prefix}_save", disabled=disabled):
+                try:
+                    create_alert_rule(
+                        get_active_token(), serial_number, metric_name,
+                        threshold_min=threshold_min, threshold_max=threshold_max, trigger_value=trigger_value,
+                    )
+                    st.success("Alert rule saved.")
+                    st.rerun()
+                except ApiError as e:
+                    st.error(f"Could not save rule: {e.detail}")
 
 
 def _factory_reset_control(serial_number: str, disabled: bool):
@@ -81,8 +158,8 @@ def _site_options():
     return by_label, list(by_label.keys())
 
 
-tab_sites, tab_devices, tab_provision, tab_templates = st.tabs(
-    ["Sites", "Devices", "Provisioning", "Node Templates"]
+tab_sites, tab_devices, tab_provision, tab_templates, tab_alert_templates = st.tabs(
+    ["Sites", "Devices", "Provisioning", "Node Templates", "Alert Templates"]
 )
 
 # =====================================================================================
@@ -180,7 +257,7 @@ with tab_devices:
 
     if gateways:
         for gw in gateways:
-            c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 1, 1])
+            c1, c2, c3, c4, c5, c6 = st.columns([3, 2, 2, 1, 1, 1])
             with c1:
                 st.write(f"**{gw['name'] or gw['gateway_id']}**")
                 st.caption(f"ID: {gw['gateway_id']}")
@@ -197,6 +274,8 @@ with tab_devices:
                         st.error(f"Could not deactivate: {e.detail}")
             with c5:
                 _factory_reset_control(gw["serial_number"], in_support_view)
+            with c6:
+                _alert_rules_control(gw["serial_number"], in_support_view)
     else:
         st.info("No gateways found for this filter.")
 
@@ -210,7 +289,7 @@ with tab_devices:
 
     if sensors:
         for sn in sensors:
-            c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 1, 1])
+            c1, c2, c3, c4, c5, c6 = st.columns([3, 2, 2, 1, 1, 1])
             with c1:
                 st.write(f"**{sn['name'] or sn['sensor_id']}**")
                 st.caption(f"ID: {sn['sensor_id']} — Gateway: {sn['gateway_id']}")
@@ -227,6 +306,8 @@ with tab_devices:
                         st.error(f"Could not deactivate: {e.detail}")
             with c5:
                 _factory_reset_control(sn["serial_number"], in_support_view)
+            with c6:
+                _alert_rules_control(sn["serial_number"], in_support_view)
     else:
         st.info("No sensors found for this filter.")
 
@@ -381,3 +462,87 @@ with tab_templates:
                         st.rerun()
                     except ApiError as e:
                         st.error(f"Could not create template: {e.detail}")
+
+# =====================================================================================
+# Alert Templates (org-wide, applied to Node Templates at provisioning time)
+# =====================================================================================
+with tab_alert_templates:
+    st.markdown("### Alert Templates")
+    st.caption(
+        "Templates are seeded onto a device's alert rules automatically when it's "
+        "provisioned via a Node Template that references one. Editing a template here "
+        "does not retroactively change rules already seeded onto existing devices — "
+        "manage those directly from the device's own Alert Rules control in the Devices tab."
+    )
+    try:
+        alert_templates = list_alert_templates(token).get("alert_templates", [])
+    except ApiError as e:
+        alert_templates = []
+        st.error(f"Could not load alert templates: {e.detail}")
+
+    with st.form("create_alert_template_form", border=False):
+        new_template_name = st.text_input("New template name")
+        create_submitted = st.form_submit_button("Create Template", type="primary", disabled=in_support_view)
+    if create_submitted:
+        if not new_template_name.strip():
+            st.error("Template name is required.")
+        else:
+            try:
+                create_alert_template(token, new_template_name)
+                st.success(f"Template '{new_template_name}' created.")
+                st.rerun()
+            except ApiError as e:
+                st.error(f"Could not create template: {e.detail}")
+
+    st.markdown("---")
+
+    if not alert_templates:
+        st.info("No alert templates yet.")
+    else:
+        for tmpl in alert_templates:
+            with st.expander(f"{tmpl['name']} — {len(tmpl['rules'])} rule(s)"):
+                if tmpl["rules"]:
+                    for r in tmpl["rules"]:
+                        rc1, rc2, rc3 = st.columns([2, 3, 1])
+                        with rc1:
+                            st.write(f"**{r['metric_name']}**")
+                        with rc2:
+                            if r["metric_name"] == "motion":
+                                st.write(f"Trigger: {r['trigger_value']}")
+                            else:
+                                st.write(f"Min: {r['threshold_min']}, Max: {r['threshold_max']}")
+                        with rc3:
+                            if st.button(
+                                "Delete", key=f"del_tmpl_rule_{tmpl['alert_template_id']}_{r['alert_template_rule_id']}",
+                                disabled=in_support_view,
+                            ):
+                                try:
+                                    delete_alert_template_rule(token, tmpl["alert_template_id"], r["alert_template_rule_id"])
+                                    st.rerun()
+                                except ApiError as e:
+                                    st.error(f"Could not delete rule: {e.detail}")
+                else:
+                    st.caption("No rules in this template yet.")
+
+                st.markdown("**Add rule**")
+                key_prefix = f"tmpl_{tmpl['alert_template_id']}"
+                metric_name, threshold_min, threshold_max, trigger_value = _metric_threshold_inputs(key_prefix)
+                if st.button("Save Rule", key=f"{key_prefix}_save", disabled=in_support_view):
+                    try:
+                        add_alert_template_rule(
+                            token, tmpl["alert_template_id"], metric_name,
+                            threshold_min=threshold_min, threshold_max=threshold_max, trigger_value=trigger_value,
+                        )
+                        st.success("Rule saved.")
+                        st.rerun()
+                    except ApiError as e:
+                        st.error(f"Could not save rule: {e.detail}")
+
+                st.markdown("---")
+                if st.button("Delete Template", key=f"del_tmpl_{tmpl['alert_template_id']}", disabled=in_support_view):
+                    try:
+                        delete_alert_template(token, tmpl["alert_template_id"])
+                        st.success(f"Template '{tmpl['name']}' deleted.")
+                        st.rerun()
+                    except ApiError as e:
+                        st.error(f"Could not delete template: {e.detail}")
