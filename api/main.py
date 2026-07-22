@@ -768,6 +768,10 @@ def set_password_from_token(data: SetPasswordFromToken):
     cur.close(); conn.close()
     return {"status": "password_set"}
 
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str
+
 @app.post("/users/me/password/change")
 def change_own_password(data: ChangePassword, current_user: User = Depends(get_current_user)):
     """Self-service password rotation for a user who already has a working password —
