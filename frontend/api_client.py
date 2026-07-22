@@ -235,6 +235,17 @@ def factory_reset_device(access_token, serial_number, wait_for_device_confirmati
     )
 
 
+def get_sensor_readings(access_token, serial_number, from_date=None, to_date=None, metric=None, limit=500):
+    params = {"limit": limit}
+    if from_date:
+        params["from_date"] = from_date
+    if to_date:
+        params["to_date"] = to_date
+    if metric:
+        params["metric"] = metric
+    return _request("GET", f"/sensors/{serial_number}/readings", token=access_token, params=params)
+
+
 # =====================================================================================
 # Node Templates (org-level)
 # =====================================================================================

@@ -1,7 +1,9 @@
+from datetime import datetime, timedelta
 import streamlit as st
 from session import do_logout, get_active_token
 from style import inject_css, badge
-from api_client import ApiError, list_sites, list_gateways, list_sensors, list_alerts
+import pandas as pd
+from api_client import ApiError, list_sites, list_gateways, list_sensors, list_alerts, get_sensor_readings
 
 st.set_page_config(page_title="Dashboard", page_icon="favicon.ico", layout="wide")
 inject_css()
@@ -119,8 +121,36 @@ else:
 
     st.markdown("---")
     st.markdown("### Recent readings")
-    st.info(
-        "Live sensor readings and trend charts need a time-series read endpoint "
-        "(e.g. GET /sensors/{id}/readings) that doesn't exist yet — device_latest_status "
-        "exists server-side but isn't exposed via the API. Tracked in outstanding tasks (RPT-1)."
+    all_devices = (
+        [{"label": f"{g['name'] or g['gateway_id']} (gateway)", "serial_number": g["serial_number"]} for g in gateways]
+        + [{"label": f"{s['name'] or s['sensor_id']} (sensor)", "serial_number": s["serial_number"]} for s in sensors]
     )
+    if not all_devices:
+        st.caption("No devices provisioned yet.")
+    else:
+        device_by_label = {d["label"]: d["serial_number"] for d in all_devices}
+        chosen_label = st.selectbox("Device", list(device_by_label.keys()), key="readings_device_select")
+        window_label = st.radio("Window", ["Last 24h", "Last 7 days", "Last 30 days"], horizontal=True, key="readings_window")
+        window_hours = {"Last 24h": 24, "Last 7 days": 24 * 7, "Last 30 days": 24 * 30}[window_label]
+        from_date = (datetime.utcnow() - timedelta(hours=window_hours)).isoformat()
+
+        try:
+            readings = get_sensor_readings(
+                token, device_by_label[chosen_label], from_date=from_date, limit=2000,
+            ).get("readings", [])
+        except ApiError as e:
+            readings = []
+            st.error(f"Could not load readings: {e.detail}")
+
+        if not readings:
+            st.info("No readings for this device in the selected window yet.")
+        else:
+            df = pd.DataFrame(readings)
+            df["ts"] = pd.to_datetime(df["ts"])
+            df = df.sort_values("ts").set_index("ts")
+            numeric_cols = [c for c in ("temperature", "humidity", "battery") if c in df.columns and df[c].notna().any()]
+            if numeric_cols:
+                st.line_chart(df[numeric_cols])
+            if "motion" in df.columns and df["motion"].notna().any():
+                st.caption("Motion (most recent readings)")
+                st.dataframe(df[["motion"]].tail(50).iloc[::-1], width="stretch")

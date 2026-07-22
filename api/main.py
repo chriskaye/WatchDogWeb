@@ -845,6 +845,90 @@ def ingest(data: IngestPayload):
 
     return {"status": "ingested", "gateway_id": data.gateway_id, "sensor_id": data.sensor_id}
 
+@app.get("/sensors/{serial_number}/readings")
+def get_sensor_readings(
+    serial_number: str,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    metric: str | None = None,
+    limit: int = 500,
+    current_user: User = Depends(get_current_user),
+):
+    """RPT-1: time-series read endpoint backing dashboard trend charts and report
+    templates. Despite the path (kept matching the roadmap's original naming), this works
+    for gateways too — a gateway's own onboard sensing shares the same sensor_data table.
+
+    from_date/to_date are ISO-8601 timestamps (defaults to the last 24h if from_date is
+    omitted). metric filters to one of temperature/humidity/battery/motion; omitted
+    returns all four per row. Read-only — any site viewer-or-above can call this, matching
+    the read-level check other GET endpoints in this file use (require_site_access with
+    admin=False), not the admin-only bar factory_reset/deprovision use.
+    """
+    conn = get_db(); cur = conn.cursor()
+    device = get_device_org_and_site(cur, serial_number)
+    if not device:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found")
+    device_org_id, device_site_id = device
+    require_site_access(cur, current_user, device_org_id, device_site_id, admin=False)
+
+    cur.execute("SELECT device_type FROM device_registry WHERE serial_number = %s;", (serial_number,))
+    reg_row = cur.fetchone()
+    device_type = reg_row[0] if reg_row else None
+    if device_type not in ("gateway", "sensor"):
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found in registry")
+
+    if device_type == "sensor":
+        cur.execute("SELECT sensor_id FROM sensors WHERE serial_number = %s;", (serial_number,))
+        row = cur.fetchone()
+        target_col, target_val = "sensor_id", (row[0] if row else None)
+    else:
+        cur.execute("SELECT gateway_id FROM gateways WHERE serial_number = %s;", (serial_number,))
+        row = cur.fetchone()
+        target_col, target_val = "gateway_id", (row[0] if row else None)
+
+    if not target_val:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    limit = max(1, min(limit, 5000))
+    query = f"SELECT ts, temperature, humidity, motion, battery FROM sensor_data WHERE {target_col} = %s"
+    params = [target_val]
+    if device_type == "gateway":
+        # Exclude readings relayed from child sensors — those belong under their own
+        # serial_number and would otherwise be double-counted against the gateway's own.
+        query += " AND (sensor_id IS NULL OR sensor_id = '')"
+    if from_date:
+        query += " AND ts >= %s"
+        params.append(from_date)
+    else:
+        query += " AND ts >= NOW() - INTERVAL '24 hours'"
+    if to_date:
+        query += " AND ts <= %s"
+        params.append(to_date)
+    query += " ORDER BY ts DESC LIMIT %s;"
+    params.append(limit)
+
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+
+    readings = []
+    for ts, temperature, humidity, motion, battery in rows:
+        point = {"ts": ts}
+        if metric is None or metric == "temperature":
+            point["temperature"] = temperature
+        if metric is None or metric == "humidity":
+            point["humidity"] = humidity
+        if metric is None or metric == "motion":
+            point["motion"] = motion
+        if metric is None or metric == "battery":
+            point["battery"] = battery
+        readings.append(point)
+
+    return {"serial_number": serial_number, "readings": readings}
+
 @app.post("/users/invite") # users invited by org admins
 def invite_user(data: InviteUser, current_user: User = Depends(get_current_user)):
     # 'watchdog_admin' is no longer a site_role at all (it's the flat users.is_watchdog_admin

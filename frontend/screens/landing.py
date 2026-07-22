@@ -1,28 +1,12 @@
 import streamlit as st
-from api_client import verify_email, ApiError
 
 if "mode" not in st.session_state:
     st.session_state.mode = None  # None, "login", "create"
 
-# ---------- EMAIL VERIFICATION LINK HANDLING ----------
-verify_token = st.query_params.get("token")
-if verify_token and not st.session_state.get("verification_handled"):
-    st.session_state.verification_handled = True
-    with st.container(horizontal_alignment="center"):
-        st.title("WatchDog", text_alignment="center")
-        st.markdown("---")
-        try:
-            verify_email(verify_token)
-            st.success("Your email has been verified! You can now log in.")
-        except ApiError as e:
-            st.error(f"Verification failed: {e.detail}")
-        except Exception:
-            st.error("Could not reach the WatchDog server. Please try again shortly.")
-        st.query_params.clear()
-        if st.button("Continue to Log In"):
-            st.session_state.mode = "login"
-            st.rerun()
-    st.stop()
+# Email verification is now handled by its own routable page (screens/verify.py,
+# url_path="verify") rather than here — see app.py for why: this page's own URL
+# ("/" via default=True) never matched "/verify" in the first place, which was the root
+# cause of the "Page not found" dialog appearing alongside a working verification result.
 
 # ---------- LANDING PAGE CONTENT ----------
 with st.container(horizontal_alignment="center"):
