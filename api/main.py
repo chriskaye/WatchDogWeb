@@ -11,6 +11,7 @@ import bcrypt
 import requests
 import json
 from db_helpers import get_sensors_and_capabilities_for_gateway
+from email_backend import send_templated_email
 
 app = FastAPI()
 
@@ -487,7 +488,10 @@ def require_platform_admin(cur, user: User):
 
 def send_verification_email(email: str, token: str):
     verify_url = FRONTEND_BASE_URL + f"/verify?token={token}"
-    # Replace this with real email sending later
+    send_templated_email(
+        email, "Verify your WatchDog account",
+        f"Welcome to WatchDog. Verify your account by visiting:\n{verify_url}\n\nThis link expires in 24 hours.",
+    )
     print(f"[DEBUG] Send verification email to {email}: {verify_url}")
 
 # --- verification tokens (user_verification_tokens table) ---
@@ -691,6 +695,10 @@ def verify_email(token: str):
     if password_setup_required:
         setup_token = create_verification_token(cur, user_id, "password_reset")
         setup_url = FRONTEND_BASE_URL + f"/set-password?token={setup_token}"
+        send_templated_email(
+            email, "Set your WatchDog password",
+            f"Set your WatchDog password by visiting:\n{setup_url}\n\nThis link expires in 24 hours.",
+        )
         print(f"[DEBUG] Send password setup link to {email}: {setup_url}")
 
     conn.commit()
@@ -714,6 +722,10 @@ def request_initial_password_setup(email: str):
         token = create_verification_token(cur, row[0], "password_reset")
         conn.commit()
         setup_url = FRONTEND_BASE_URL + f"/set-password?token={token}"
+        send_templated_email(
+            email, "Set your WatchDog password",
+            f"Set your WatchDog password by visiting:\n{setup_url}\n\nThis link expires in 24 hours.",
+        )
         print(f"[DEBUG] Send password setup link to {email}: {setup_url}")
     cur.close(); conn.close()
     return {"status": "if_eligible_email_sent"}
@@ -755,6 +767,30 @@ def set_password_from_token(data: SetPasswordFromToken):
     conn.commit()
     cur.close(); conn.close()
     return {"status": "password_set"}
+
+@app.post("/users/me/password/change")
+def change_own_password(data: ChangePassword, current_user: User = Depends(get_current_user)):
+    """Self-service password rotation for a user who already has a working password —
+    distinct from /users/password/request_set (only works when password_hash IS NULL) and
+    /users/unlock/request (only works when locked). Bumps sessions_invalidated_at on
+    success, same as lock/suspend — this deliberately also invalidates the token used to
+    make THIS request, forcing a fresh login. FRONTEND NOTE for FE-5: treat a successful
+    response as "log the user out and return to login", not as "still logged in"."""
+    if len(data.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT password_hash FROM users WHERE user_id = %s;", (current_user.user_id,))
+    row = cur.fetchone()
+    if not row or not row[0] or not verify_password(data.current_password, row[0]):
+        cur.close(); conn.close()
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    new_hash = get_password_hash(data.new_password)
+    cur.execute(
+        "UPDATE users SET password_hash = %s, sessions_invalidated_at = NOW() WHERE user_id = %s;",
+        (new_hash, current_user.user_id),
+    )
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "password_changed"}
 
 @app.post("/ingest")
 def ingest(data: IngestPayload):
@@ -1221,14 +1257,80 @@ def hard_delete_gateway_endpoint(data: HardDeleteGateway):
     conn.close()
     return {"status": "gateway_hard_deleted", "gateway_id": data.gateway_id}
 
+class FactoryResetRequest(BaseModel):
+    wait_for_device_confirmation: bool = True
+
+def _clear_device_registry_links(cur, device_type: str, target_id: str, org_id: int | None):
+    """Clears org/site/crypto links for a device being wiped (factory reset), so it can be
+    resold or reprovisioned from a clean slate. Deliberately more aggressive than
+    /devices/{serial}/deprovision, which intentionally leaves org_id/site_id in place for
+    same-org redeployment continuity — factory reset means the device itself is being
+    wiped, so the registry should match that."""
+    if device_type == "gateway":
+        cur.execute(
+            "UPDATE gateways SET is_active = FALSE, org_id = NULL, site_id = NULL, crypto_id = NULL WHERE gateway_id = %s;",
+            (target_id,),
+        )
+    else:
+        cur.execute(
+            "UPDATE sensors SET is_active = FALSE, org_id = NULL, site_id = NULL WHERE sensor_id = %s;",
+            (target_id,),
+        )
+    cur.execute(
+        "UPDATE device_registry SET is_provisioned = FALSE, provisioned_at = NULL WHERE serial_number = %s;",
+        (target_id,),
+    )
+
 @app.post("/devices/{serial_number}/factory_reset")
-def factory_reset_device(serial_number: str, current_user: User = Depends(get_current_user)):
-    """PARKED per your instruction. When built, this should: send a 'factory reset' OTA
-    command via ota_jobs to the device, and once confirmed, clear its org/site links and
-    crypto_profile links in device_registry/gateways/sensors so it can be resold or
-    reprovisioned. That's real design work (needs an OTA command *type* beyond firmware
-    updates, and a confirmation-driven state machine), not something to fake here."""
-    raise HTTPException(status_code=501, detail="Node factory reset is not implemented yet")
+def factory_reset_device(serial_number: str, data: FactoryResetRequest = FactoryResetRequest(), current_user: User = Depends(get_current_user)):
+    """Sends a factory_reset command via ota_jobs (job_type='factory_reset', migration_004).
+    Caller chooses per-request whether to wait for the device to confirm:
+      - wait_for_device_confirmation=True (default): links are cleared only once the device
+        reports success back via /ota/jobs/update — safer, avoids the registry saying
+        "unlinked" before the physical device has actually wiped.
+      - wait_for_device_confirmation=False: links are cleared immediately when the command
+        is sent, without waiting for the device."""
+    conn = get_db(); cur = conn.cursor()
+    device = get_device_org_and_site(cur, serial_number)
+    if not device:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found")
+    device_org_id, device_site_id = device
+    require_device_admin(cur, current_user, device_org_id, device_site_id)
+
+    cur.execute("SELECT device_type FROM device_registry WHERE serial_number = %s;", (serial_number,))
+    reg_row = cur.fetchone()
+    device_type = reg_row[0] if reg_row else None
+    if device_type not in ("gateway", "sensor"):
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Device not found in registry")
+
+    confirmation_required = data.wait_for_device_confirmation
+    status_value = "pending" if confirmation_required else "success"
+    cur.execute(
+        """
+        INSERT INTO ota_jobs (target_type, target_id, job_type, confirmation_required, status,
+                               started_at, completed_at)
+        VALUES (%s, %s, 'factory_reset', %s, %s, NOW(), CASE WHEN %s THEN NULL ELSE NOW() END)
+        RETURNING ota_id;
+        """,
+        (device_type, serial_number, confirmation_required, status_value, confirmation_required),
+    )
+    ota_id = cur.fetchone()[0]
+
+    table = "gateways" if device_type == "gateway" else "sensors"
+    id_col = "gateway_id" if device_type == "gateway" else "sensor_id"
+    cur.execute(f"UPDATE {table} SET ota_status = 'pending' WHERE {id_col} = %s;", (serial_number,))
+
+    if confirmation_required:
+        conn.commit(); cur.close(); conn.close()
+        return {"status": "factory_reset_queued", "ota_id": ota_id, "confirmation_required": True}
+
+    _clear_device_registry_links(cur, device_type, serial_number, device_org_id)
+    log_event(cur, device_org_id, "device_factory_reset", current_user.user_id,
+              device_type, serial_number, {"confirmation_required": False, "ota_id": ota_id})
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "factory_reset_completed", "ota_id": ota_id, "confirmation_required": False}
 
 
 @app.post("/users/gdpr_delete")
@@ -1335,7 +1437,7 @@ def get_pending_ota_jobs(gateway_id: str):
     # Pending jobs for this gateway and its sensors
     cur.execute(
         """
-        SELECT j.ota_id, j.target_type, j.target_id, j.firmware_version
+        SELECT j.ota_id, j.target_type, j.target_id, j.firmware_version, j.job_type, j.payload
         FROM ota_jobs j
         LEFT JOIN gateways g
           ON j.target_type = 'gateway' AND j.target_id = g.gateway_id
@@ -1354,14 +1456,20 @@ def get_pending_ota_jobs(gateway_id: str):
     cur.close()
     conn.close()
 
+    # job_type/payload are additive fields (migration_004). Existing firmware that only
+    # reads firmware_version and target_type is unaffected for firmware_update jobs.
+    # Firmware doesn't yet act on factory_reset/configuration_update job_types — those
+    # will just sit here inertly (safe no-op) until firmware is updated to handle them.
     jobs = [
         {
             "ota_id": ota_id,
             "target_type": target_type,
             "target_id": target_id,
             "firmware_version": fw,
+            "job_type": job_type,
+            "payload": payload,
         }
-        for ota_id, target_type, target_id, fw in rows
+        for ota_id, target_type, target_id, fw, job_type, payload in rows
     ]
 
     return {"jobs": jobs}
@@ -1386,7 +1494,7 @@ def update_ota_job(data: OtaJobUpdate):
 
     # Fetch target info
     cur.execute(
-        "SELECT target_type, target_id, firmware_version FROM ota_jobs WHERE ota_id = %s;",
+        "SELECT target_type, target_id, firmware_version, job_type FROM ota_jobs WHERE ota_id = %s;",
         (data.ota_id,),
     )
     row = cur.fetchone()
@@ -1396,32 +1504,47 @@ def update_ota_job(data: OtaJobUpdate):
         conn.close()
         raise HTTPException(status_code=404, detail="OTA job not found")
 
-    target_type, target_id, firmware_version = row
+    target_type, target_id, firmware_version, job_type = row
 
     # Update target firmware + ota_status
     if data.status == "success":
-        if target_type == "gateway":
-            cur.execute(
-                """
-                UPDATE gateways
-                SET firmware_version = %s,
-                    desired_firmware_version = %s,
-                    ota_status = 'success'
-                WHERE gateway_id = %s;
-                """,
-                (firmware_version, firmware_version, target_id),
-            )
+        if job_type == "firmware_update":
+            if target_type == "gateway":
+                cur.execute(
+                    """
+                    UPDATE gateways
+                    SET firmware_version = %s,
+                        desired_firmware_version = %s,
+                        ota_status = 'success'
+                    WHERE gateway_id = %s;
+                    """,
+                    (firmware_version, firmware_version, target_id),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE sensors
+                    SET firmware_version = %s,
+                        desired_firmware_version = %s,
+                        ota_status = 'success'
+                    WHERE sensor_id = %s;
+                    """,
+                    (firmware_version, firmware_version, target_id),
+                )
+        elif job_type == "factory_reset":
+            # This is the confirmation path from API-4: only clear links once the device
+            # has actually confirmed the wipe, per wait_for_device_confirmation=True.
+            device = get_device_org_and_site(cur, target_id)
+            reset_org_id = device[0] if device else None
+            _clear_device_registry_links(cur, target_type, target_id, reset_org_id)
+            if reset_org_id:
+                log_event(cur, reset_org_id, "device_factory_reset", None, target_type, target_id,
+                           {"confirmation_required": True, "ota_id": data.ota_id})
         else:
-            cur.execute(
-                """
-                UPDATE sensors
-                SET firmware_version = %s,
-                    desired_firmware_version = %s,
-                    ota_status = 'success'
-                WHERE sensor_id = %s;
-                """,
-                (firmware_version, firmware_version, target_id),
-            )
+            # configuration_update and any future job_type: mark success, no side effects yet.
+            table = "gateways" if target_type == "gateway" else "sensors"
+            id_col = "gateway_id" if target_type == "gateway" else "sensor_id"
+            cur.execute(f"UPDATE {table} SET ota_status = 'success' WHERE {id_col} = %s;", (target_id,))
     elif data.status == "failed":
         if target_type == "gateway":
             cur.execute(
@@ -1836,6 +1959,27 @@ def update_backup_settings(data: BackupSettingsUpdate, current_user: User = Depe
     cur.close(); conn.close()
     return {"status": "backup_settings_updated"}
 
+@app.get("/backups")
+def list_backups(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)  # Global Admin only, per spec — matches /backups/create
+    cur.execute(
+        """
+        SELECT backup_id, name, description, schedule_type, status, started_at, completed_at,
+               error_message, created_by, created_at
+        FROM backups
+        WHERE org_id = %s
+        ORDER BY created_at DESC;
+        """,
+        (current_user.org_id,),
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"backups": [
+        {"backup_id": r[0], "name": r[1], "description": r[2], "schedule_type": r[3], "status": r[4],
+         "started_at": r[5], "completed_at": r[6], "error_message": r[7], "created_by": r[8], "created_at": r[9]}
+        for r in rows
+    ]}
 
 # =====================================================================================
 # Phase E — GDPR deletion
@@ -1887,6 +2031,11 @@ def request_org_deletion(current_user: User = Depends(get_current_user)):
     cur.close(); conn.close()
 
     cancel_url = FRONTEND_BASE_URL + f"/gdpr-cancel?token={cancel_token}"
+    send_templated_email(
+        current_user.email, "WatchDog organisation deletion scheduled",
+        f"Your organisation's data is scheduled for deletion on {scheduled_for}.\n"
+        f"To cancel, visit:\n{cancel_url}",
+    )
     print(f"[DEBUG] Org deletion scheduled for {scheduled_for}. Cancel: {cancel_url}")
     return {"status": "deletion_scheduled", "scheduled_for": scheduled_for.isoformat(), "gdpr_deletion_request_id": request_id}
 
@@ -1929,6 +2078,10 @@ def request_self_delete(current_user: User = Depends(get_current_user)):
     conn.commit(); cur.close(); conn.close()
 
     confirm_url = FRONTEND_BASE_URL + f"/confirm-delete?token={token}"
+    send_templated_email(
+        current_user.email, "Confirm your WatchDog account deletion",
+        f"Confirm deletion of your WatchDog account by visiting:\n{confirm_url}\n\nThis link expires in 24 hours.",
+    )
     print(f"[DEBUG] Send self-delete confirmation to {current_user.email}: {confirm_url}")
     return {"status": "confirmation_sent"}
 
@@ -2023,6 +2176,10 @@ def request_unlock(email: str):
         token = create_verification_token(cur, row[0], "account_unlock")
         conn.commit()
         unlock_url = FRONTEND_BASE_URL + f"/unlock?token={token}"
+        send_templated_email(
+            email, "Unlock your WatchDog account",
+            f"Unlock your WatchDog account by visiting:\n{unlock_url}\n\nThis link expires in 24 hours.",
+        )
         print(f"[DEBUG] Send unlock/password-reset email to {email}: {unlock_url}")
     cur.close(); conn.close()
     return {"status": "if_locked_email_sent"}
@@ -2639,6 +2796,47 @@ def delete_alert_rule(alert_rule_id: int, current_user: User = Depends(get_curre
     conn.commit(); cur.close(); conn.close()
     return {"status": "alert_rule_deleted", "alert_rule_id": alert_rule_id}
 
+@app.get("/alerts")
+def list_alerts(serial_number: str | None = None, status: str | None = None, current_user: User = Depends(get_current_user)):
+    """Site-scoped the same way as /gateways and /sensors — alerts itself carries no
+    org_id/site_id, so we resolve it by joining to whichever of gateways/sensors owns the
+    serial_number."""
+    conn = get_db(); cur = conn.cursor()
+    site_ids = _accessible_site_ids_or_none(cur, current_user, None)
+    query = """
+        SELECT a.alert_id, a.alert_rule_id, a.serial_number, a.metric_name, a.triggered_value,
+               a.status, a.triggered_at, a.acknowledged_by, a.acknowledged_at, a.resolved_at
+        FROM alerts a
+        JOIN (
+            SELECT serial_number, org_id, site_id FROM gateways
+            UNION ALL
+            SELECT serial_number, org_id, site_id FROM sensors
+        ) d ON d.serial_number = a.serial_number
+        WHERE d.org_id = %s
+    """
+    params = [current_user.org_id]
+    if site_ids is not None:
+        if not site_ids:
+            cur.close(); conn.close()
+            return {"alerts": []}
+        query += " AND d.site_id = ANY(%s)"
+        params.append(site_ids)
+    if serial_number is not None:
+        query += " AND a.serial_number = %s"
+        params.append(serial_number)
+    if status is not None:
+        query += " AND a.status = %s"
+        params.append(status)
+    query += " ORDER BY a.triggered_at DESC;"
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"alerts": [
+        {"alert_id": r[0], "alert_rule_id": r[1], "serial_number": r[2], "metric_name": r[3],
+         "triggered_value": r[4], "status": r[5], "triggered_at": r[6],
+         "acknowledged_by": r[7], "acknowledged_at": r[8], "resolved_at": r[9]}
+        for r in rows
+    ]}
 
 # =====================================================================================
 # MCU catalog CRUD (mcu_variants, mcu_variant_gpio_pins, module_mcu_compatibility)
