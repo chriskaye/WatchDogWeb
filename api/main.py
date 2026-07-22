@@ -88,6 +88,7 @@ class User(BaseModel):
     user_id: int
     email: str
     org_id: int
+    default_site_id: int | None = None
     is_verified: bool
     is_watchdog_admin: bool = False
     # Support Access impersonation context — default False/None for every normal login.
@@ -204,7 +205,7 @@ def get_user_by_id(user_id: int):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "SELECT user_id, email, org_id, is_verified, sessions_invalidated_at, is_watchdog_admin FROM users WHERE user_id = %s;",
+        "SELECT user_id, email, org_id, is_verified, sessions_invalidated_at, is_watchdog_admin, default_site_id FROM users WHERE user_id = %s;",
         (user_id,),
     )
     row = cur.fetchone()
@@ -212,8 +213,8 @@ def get_user_by_id(user_id: int):
     conn.close()
     if not row:
         return None
-    uid, email, org_id, is_verified, sessions_invalidated_at, is_watchdog_admin = row
-    user = User(user_id=uid, email=email, org_id=org_id, is_verified=is_verified, is_watchdog_admin=is_watchdog_admin)
+    uid, email, org_id, is_verified, sessions_invalidated_at, is_watchdog_admin, default_site_id = row
+    user = User(user_id=uid, email=email, org_id=org_id, is_verified=is_verified, is_watchdog_admin=is_watchdog_admin, default_site_id=default_site_id)
     return user, sessions_invalidated_at
 
 def _resolve_support_view_user(payload: dict) -> User:
@@ -915,6 +916,28 @@ def get_my_roles(current_user: User = Depends(get_current_user)):
         "site_roles": site_roles,
         "is_watchdog_admin": current_user.is_watchdog_admin,
     }
+
+class DefaultSiteUpdate(BaseModel):
+    site_id: int | None = None
+
+@app.post("/users/me/default_site")
+def set_default_site(data: DefaultSiteUpdate, current_user: User = Depends(get_current_user)):
+    """Sets/clears the calling user's default_site_id (DB-1). Agreed approach: link to an
+    existing site rather than duplicate address data onto users. Pass site_id=null to clear."""
+    conn = get_db(); cur = conn.cursor()
+    if data.site_id is not None:
+        cur.execute("SELECT org_id FROM sites WHERE site_id = %s;", (data.site_id,))
+        row = cur.fetchone()
+        if not row:
+            cur.close(); conn.close()
+            raise HTTPException(status_code=404, detail="Site not found")
+        if row[0] != current_user.org_id:
+            cur.close(); conn.close()
+            raise HTTPException(status_code=403, detail="Site belongs to another organisation")
+        _accessible_site_ids_or_none(cur, current_user, data.site_id)  # raises 403 if not accessible
+    cur.execute("UPDATE users SET default_site_id = %s WHERE user_id = %s;", (data.site_id, current_user.user_id))
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "default_site_updated", "default_site_id": data.site_id}
 
 @app.get("/users")
 def list_org_users(current_user: User = Depends(get_current_user)):

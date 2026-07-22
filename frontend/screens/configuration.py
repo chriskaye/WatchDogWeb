@@ -5,10 +5,49 @@ from api_client import (
     ApiError,
     list_sites, create_site, update_site, delete_site,
     list_gateways, list_sensors, soft_delete_gateway, soft_delete_sensor,
-    check_device, activate_device, deprovision_device,
+    check_device, activate_device, deprovision_device, factory_reset_device,
     list_node_templates, create_node_template, delete_node_template,
     list_mcu_variants, list_alert_templates,
 )
+
+
+def _factory_reset_control(serial_number: str, disabled: bool):
+    """Shared factory-reset confirm flow for both gateway and sensor rows."""
+    key_prefix = f"factory_reset_{serial_number}"
+    if st.button("Factory Reset", key=f"{key_prefix}_open", disabled=disabled):
+        st.session_state[f"{key_prefix}_show"] = True
+    if st.session_state.get(f"{key_prefix}_show"):
+        st.warning(
+            f"Factory reset **{serial_number}**? This unlinks it from your organisation/site "
+            "so it can be resold or reprovisioned."
+        )
+        wait_for_confirmation = st.checkbox(
+            "Wait for device to confirm the wipe before clearing links (recommended)",
+            value=True, key=f"{key_prefix}_wait",
+        )
+        if not wait_for_confirmation:
+            st.caption(
+                "⚠️ Links will be cleared immediately, before the physical device has "
+                "actually wiped — only use this if you know the device is unreachable or "
+                "you're testing the API path (firmware doesn't act on factory_reset jobs yet)."
+            )
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            if st.button("Confirm Factory Reset", key=f"{key_prefix}_confirm"):
+                try:
+                    result = factory_reset_device(token, serial_number, wait_for_confirmation)
+                    st.session_state[f"{key_prefix}_show"] = False
+                    if result.get("confirmation_required"):
+                        st.success(f"Factory reset queued for {serial_number} — waiting for device confirmation.")
+                    else:
+                        st.success(f"Factory reset completed for {serial_number}.")
+                    st.rerun()
+                except ApiError as e:
+                    st.error(f"Could not factory reset: {e.detail}")
+        with cc2:
+            if st.button("Cancel", key=f"{key_prefix}_cancel"):
+                st.session_state[f"{key_prefix}_show"] = False
+                st.rerun()
 
 st.set_page_config(page_title="Configuration", page_icon="favicon.ico", layout="wide")
 inject_css()
@@ -141,7 +180,7 @@ with tab_devices:
 
     if gateways:
         for gw in gateways:
-            c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
+            c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 1, 1])
             with c1:
                 st.write(f"**{gw['name'] or gw['gateway_id']}**")
                 st.caption(f"ID: {gw['gateway_id']}")
@@ -156,6 +195,8 @@ with tab_devices:
                         st.rerun()
                     except ApiError as e:
                         st.error(f"Could not deactivate: {e.detail}")
+            with c5:
+                _factory_reset_control(gw["serial_number"], in_support_view)
     else:
         st.info("No gateways found for this filter.")
 
@@ -169,7 +210,7 @@ with tab_devices:
 
     if sensors:
         for sn in sensors:
-            c1, c2, c3, c4 = st.columns([3, 2, 2, 1])
+            c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 1, 1])
             with c1:
                 st.write(f"**{sn['name'] or sn['sensor_id']}**")
                 st.caption(f"ID: {sn['sensor_id']} — Gateway: {sn['gateway_id']}")
@@ -184,6 +225,8 @@ with tab_devices:
                         st.rerun()
                     except ApiError as e:
                         st.error(f"Could not deactivate: {e.detail}")
+            with c5:
+                _factory_reset_control(sn["serial_number"], in_support_view)
     else:
         st.info("No sensors found for this filter.")
 

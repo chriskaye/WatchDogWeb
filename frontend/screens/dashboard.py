@@ -1,7 +1,7 @@
 import streamlit as st
 from session import do_logout, get_active_token
 from style import inject_css, badge
-from api_client import ApiError, list_sites, list_gateways, list_sensors
+from api_client import ApiError, list_sites, list_gateways, list_sensors, list_alerts
 
 st.set_page_config(page_title="Dashboard", page_icon="favicon.ico", layout="wide")
 inject_css()
@@ -38,6 +38,12 @@ except ApiError as e:
     sensors = []
     st.error(f"Could not load sensors: {e.detail}")
 
+try:
+    open_alerts = list_alerts(token, status="open").get("alerts", [])
+except ApiError as e:
+    open_alerts = []
+    st.error(f"Could not load alerts: {e.detail}")
+
 active_gateways = sum(1 for g in gateways if g["is_active"])
 active_sensors = sum(1 for s in sensors if s["is_active"])
 
@@ -49,8 +55,41 @@ with c2:
 with c3:
     st.markdown(f'<div class="card">Sensors<br><h3>{active_sensors}/{len(sensors)} active</h3></div>', unsafe_allow_html=True)
 with c4:
-    st.markdown(f'<div class="card">Active Alerts<br><h3>—</h3></div>', unsafe_allow_html=True)
-    st.caption("No alerts feed endpoint yet — see outstanding tasks.")
+    st.markdown(
+        f'<div class="card">Active Alerts<br><h3 style="color:{"#ff6b6b" if open_alerts else "inherit"}">{len(open_alerts)}</h3></div>',
+        unsafe_allow_html=True,
+    )
+
+st.markdown("---")
+
+# =====================================================================================
+# Alerts feed
+# =====================================================================================
+st.markdown("### Alerts")
+alert_filter = st.radio("Show", ["Open", "Acknowledged", "Resolved", "All"], horizontal=True, key="alert_status_filter")
+status_map = {"Open": "open", "Acknowledged": "acknowledged", "Resolved": "resolved", "All": None}
+try:
+    feed_alerts = list_alerts(token, status=status_map[alert_filter]).get("alerts", [])
+except ApiError as e:
+    feed_alerts = []
+    st.error(f"Could not load alerts: {e.detail}")
+
+if not feed_alerts:
+    st.info(f"No {alert_filter.lower()} alerts." if alert_filter != "All" else "No alerts.")
+else:
+    status_kind = {"open": "danger", "acknowledged": "warn", "resolved": "ok"}
+    for a in feed_alerts:
+        c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
+        with c1:
+            st.write(f"**{a['serial_number']}**")
+        with c2:
+            st.write(a["metric_name"])
+        with c3:
+            st.write(f"Value: {a['triggered_value']}")
+        with c4:
+            st.markdown(badge(a["status"], status_kind.get(a["status"], "muted")), unsafe_allow_html=True)
+        st.caption(f"Triggered: {a.get('triggered_at', '—')}")
+        st.markdown("&nbsp;", unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -83,5 +122,5 @@ else:
     st.info(
         "Live sensor readings and trend charts need a time-series read endpoint "
         "(e.g. GET /sensors/{id}/readings) that doesn't exist yet — device_latest_status "
-        "exists server-side but isn't exposed via the API. Tracked in outstanding tasks."
+        "exists server-side but isn't exposed via the API. Tracked in outstanding tasks (RPT-1)."
     )

@@ -67,6 +67,17 @@ def get_my_roles(token):
     return _request("GET", "/users/me/roles", token=token)
 
 
+def change_password(access_token, current_password, new_password):
+    return _request(
+        "POST", "/users/me/password/change", token=access_token,
+        json={"current_password": current_password, "new_password": new_password},
+    )
+
+
+def set_default_site(access_token, site_id):
+    return _request("POST", "/users/me/default_site", token=access_token, json={"site_id": site_id})
+
+
 def verify_email(token):
     return _request("GET", "/verify", params={"token": token})
 
@@ -217,6 +228,13 @@ def deprovision_device(access_token, serial_number):
     return _request("POST", f"/devices/{serial_number}/deprovision", token=access_token)
 
 
+def factory_reset_device(access_token, serial_number, wait_for_device_confirmation=True):
+    return _request(
+        "POST", f"/devices/{serial_number}/factory_reset", token=access_token,
+        json={"wait_for_device_confirmation": wait_for_device_confirmation},
+    )
+
+
 # =====================================================================================
 # Node Templates (org-level)
 # =====================================================================================
@@ -270,8 +288,6 @@ def delete_alert_rule(access_token, alert_rule_id):
 
 
 def list_alerts(access_token, serial_number=None, status=None):
-    # NOTE: no GET /alerts route exists in main.py yet — real backend gap. Don't wire an
-    # Alerts feed screen to this until the endpoint is added.
     params = {}
     if serial_number:
         params["serial_number"] = serial_number
@@ -293,8 +309,6 @@ def restore_backup(access_token, backup_id):
 
 
 def list_backups(access_token):
-    # NOTE: no GET /backups list route exists in main.py yet — this is a real backend gap,
-    # not a wrong path. Don't wire a screen to this until the endpoint is added.
     return _request("GET", "/backups", token=access_token)
 
 

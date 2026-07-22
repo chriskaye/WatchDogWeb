@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 2frejoqErA7aV8Vdva7BhIy8Eoqj3eNHMXtrjEeAw7tVeBNPabknhsI2Z5f0pQZ
+\restrict ESrRdqAzU9Y4qPkraAo6tr3SpvX5uca9NWoQo8hqcFxKqMph01d6ZT3TpJEgdG2
 
 -- Dumped from database version 18.4 (Debian 18.4-1.pgdg13+1)
 -- Dumped by pg_dump version 18.4 (Debian 18.4-1.pgdg13+1)
@@ -1922,7 +1922,8 @@ CREATE TABLE public.users (
     suspended_by integer,
     suspend_reason text,
     sessions_invalidated_at timestamp without time zone,
-    is_watchdog_admin boolean DEFAULT false NOT NULL
+    is_watchdog_admin boolean DEFAULT false NOT NULL,
+    default_site_id integer
 );
 
 
@@ -3294,6 +3295,14 @@ ALTER TABLE ONLY public.user_site_roles
 
 
 --
+-- Name: users users_default_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_default_site_id_fkey FOREIGN KEY (default_site_id) REFERENCES public.sites(site_id) ON DELETE SET NULL;
+
+
+--
 -- Name: users users_locked_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
@@ -3329,5 +3338,5 @@ ALTER TABLE ONLY public.user_verification_tokens
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 2frejoqErA7aV8Vdva7BhIy8Eoqj3eNHMXtrjEeAw7tVeBNPabknhsI2Z5f0pQZ
+\unrestrict ESrRdqAzU9Y4qPkraAo6tr3SpvX5uca9NWoQo8hqcFxKqMph01d6ZT3TpJEgdG2
 
