@@ -130,8 +130,9 @@ else:
     else:
         device_by_label = {d["label"]: d["serial_number"] for d in all_devices}
         chosen_label = st.selectbox("Device", list(device_by_label.keys()), key="readings_device_select")
-        window_label = st.radio("Window", ["Last 24h", "Last 7 days", "Last 30 days"], horizontal=True, key="readings_window")
-        window_hours = {"Last 24h": 24, "Last 7 days": 24 * 7, "Last 30 days": 24 * 30}[window_label]
+        # I edited this to show more granular timeframes, 1h, 6h, 12h 
+        window_label = st.radio("Window", ["Last 1h", "Last 6h", "Last 12h", "Last 24h", "Last 7 days", "Last 30 days"], horizontal=True, key="readings_window")
+        window_hours = {"Last 1h":1, "Last 6h":6, "Last 12h":12, "Last 24h": 24, "Last 7 days": 24 * 7, "Last 30 days": 24 * 30}[window_label]
         from_date = (datetime.utcnow() - timedelta(hours=window_hours)).isoformat()
 
         try:

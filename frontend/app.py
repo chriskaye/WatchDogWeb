@@ -26,7 +26,10 @@ set_password_page = st.Page("screens/set_password.py", title="Set Password", url
 unlock_page = st.Page("screens/unlock.py", title="Unlock Account", url_path="unlock")
 confirm_delete_page = st.Page("screens/confirm_delete.py", title="Confirm Deletion", url_path="confirm-delete")
 gdpr_cancel_page = st.Page("screens/gdpr_cancel.py", title="Cancel Org Deletion", url_path="gdpr-cancel")
-link_pages = [verify_page, set_password_page, unlock_page, confirm_delete_page, gdpr_cancel_page]
+link_pages = []
+# old link pages, removed as were visible for all users but only need to be used by people who access them
+# via email inks from system generated email messgaes
+# link_pages = [verify_page, set_password_page, unlock_page, confirm_delete_page, gdpr_cancel_page]
 
 # ---------- LOGGED-IN NAVIGATION ----------
 dashboard_page = st.Page("screens/dashboard.py", title="Dashboard", default=True)
