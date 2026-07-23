@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 5kk6hwaudWT80P1J6MBTyPCP4Zq2giofXvrktHQCBbQoQffPKupLTdz3Nzhh3vk
+\restrict L8VhoKtjyHnfD0iJfbGhS3sW7FtB2XIZLsDz6QKlIwL4W4Mjj7dej3fglyla4Lx
 
 -- Dumped from database version 18.4 (Debian 18.4-1.pgdg13+1)
 -- Dumped by pg_dump version 18.4 (Debian 18.4-1.pgdg13+1)
@@ -763,6 +763,78 @@ ALTER SEQUENCE public.backup_snapshot_data_org_4_snapshot_data_id_seq OWNED BY p
 
 
 --
+-- Name: backup_snapshot_data_org_5; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.backup_snapshot_data_org_5 (
+    snapshot_data_id bigint NOT NULL,
+    source_table text NOT NULL,
+    row_hash text NOT NULL,
+    row_data jsonb NOT NULL,
+    first_seen_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.backup_snapshot_data_org_5 OWNER TO psql_admin;
+
+--
+-- Name: backup_snapshot_data_org_5_snapshot_data_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.backup_snapshot_data_org_5_snapshot_data_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.backup_snapshot_data_org_5_snapshot_data_id_seq OWNER TO psql_admin;
+
+--
+-- Name: backup_snapshot_data_org_5_snapshot_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.backup_snapshot_data_org_5_snapshot_data_id_seq OWNED BY public.backup_snapshot_data_org_5.snapshot_data_id;
+
+
+--
+-- Name: backup_snapshot_data_org_6; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.backup_snapshot_data_org_6 (
+    snapshot_data_id bigint NOT NULL,
+    source_table text NOT NULL,
+    row_hash text NOT NULL,
+    row_data jsonb NOT NULL,
+    first_seen_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.backup_snapshot_data_org_6 OWNER TO psql_admin;
+
+--
+-- Name: backup_snapshot_data_org_6_snapshot_data_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.backup_snapshot_data_org_6_snapshot_data_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.backup_snapshot_data_org_6_snapshot_data_id_seq OWNER TO psql_admin;
+
+--
+-- Name: backup_snapshot_data_org_6_snapshot_data_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.backup_snapshot_data_org_6_snapshot_data_id_seq OWNED BY public.backup_snapshot_data_org_6.snapshot_data_id;
+
+
+--
 -- Name: backup_snapshot_links_org_1; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
@@ -809,6 +881,30 @@ CREATE TABLE public.backup_snapshot_links_org_4 (
 
 
 ALTER TABLE public.backup_snapshot_links_org_4 OWNER TO psql_admin;
+
+--
+-- Name: backup_snapshot_links_org_5; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.backup_snapshot_links_org_5 (
+    backup_id integer NOT NULL,
+    snapshot_data_id bigint NOT NULL
+);
+
+
+ALTER TABLE public.backup_snapshot_links_org_5 OWNER TO psql_admin;
+
+--
+-- Name: backup_snapshot_links_org_6; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.backup_snapshot_links_org_6 (
+    backup_id integer NOT NULL,
+    snapshot_data_id bigint NOT NULL
+);
+
+
+ALTER TABLE public.backup_snapshot_links_org_6 OWNER TO psql_admin;
 
 --
 -- Name: backups; Type: TABLE; Schema: public; Owner: psql_admin
@@ -2215,6 +2311,20 @@ ALTER TABLE ONLY public.backup_snapshot_data_org_4 ALTER COLUMN snapshot_data_id
 
 
 --
+-- Name: backup_snapshot_data_org_5 snapshot_data_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_data_org_5 ALTER COLUMN snapshot_data_id SET DEFAULT nextval('public.backup_snapshot_data_org_5_snapshot_data_id_seq'::regclass);
+
+
+--
+-- Name: backup_snapshot_data_org_6 snapshot_data_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_data_org_6 ALTER COLUMN snapshot_data_id SET DEFAULT nextval('public.backup_snapshot_data_org_6_snapshot_data_id_seq'::regclass);
+
+
+--
 -- Name: backups backup_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
@@ -2496,6 +2606,22 @@ ALTER TABLE ONLY public.backup_snapshot_data_org_4
 
 
 --
+-- Name: backup_snapshot_data_org_5 backup_snapshot_data_org_5_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_data_org_5
+    ADD CONSTRAINT backup_snapshot_data_org_5_pkey PRIMARY KEY (snapshot_data_id);
+
+
+--
+-- Name: backup_snapshot_data_org_6 backup_snapshot_data_org_6_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_data_org_6
+    ADD CONSTRAINT backup_snapshot_data_org_6_pkey PRIMARY KEY (snapshot_data_id);
+
+
+--
 -- Name: backup_snapshot_links_org_1 backup_snapshot_links_org_1_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
@@ -2525,6 +2651,22 @@ ALTER TABLE ONLY public.backup_snapshot_links_org_3
 
 ALTER TABLE ONLY public.backup_snapshot_links_org_4
     ADD CONSTRAINT backup_snapshot_links_org_4_pkey PRIMARY KEY (backup_id, snapshot_data_id);
+
+
+--
+-- Name: backup_snapshot_links_org_5 backup_snapshot_links_org_5_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_links_org_5
+    ADD CONSTRAINT backup_snapshot_links_org_5_pkey PRIMARY KEY (backup_id, snapshot_data_id);
+
+
+--
+-- Name: backup_snapshot_links_org_6 backup_snapshot_links_org_6_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_links_org_6
+    ADD CONSTRAINT backup_snapshot_links_org_6_pkey PRIMARY KEY (backup_id, snapshot_data_id);
 
 
 --
@@ -2930,6 +3072,20 @@ CREATE UNIQUE INDEX backup_snapshot_data_org_4_hash_idx ON public.backup_snapsho
 
 
 --
+-- Name: backup_snapshot_data_org_5_hash_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE UNIQUE INDEX backup_snapshot_data_org_5_hash_idx ON public.backup_snapshot_data_org_5 USING btree (source_table, row_hash);
+
+
+--
+-- Name: backup_snapshot_data_org_6_hash_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE UNIQUE INDEX backup_snapshot_data_org_6_hash_idx ON public.backup_snapshot_data_org_6 USING btree (source_table, row_hash);
+
+
+--
 -- Name: backup_snapshot_links_org_1_backup_idx; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
@@ -2955,6 +3111,20 @@ CREATE INDEX backup_snapshot_links_org_3_backup_idx ON public.backup_snapshot_li
 --
 
 CREATE INDEX backup_snapshot_links_org_4_backup_idx ON public.backup_snapshot_links_org_4 USING btree (backup_id);
+
+
+--
+-- Name: backup_snapshot_links_org_5_backup_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX backup_snapshot_links_org_5_backup_idx ON public.backup_snapshot_links_org_5 USING btree (backup_id);
+
+
+--
+-- Name: backup_snapshot_links_org_6_backup_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX backup_snapshot_links_org_6_backup_idx ON public.backup_snapshot_links_org_6 USING btree (backup_id);
 
 
 --
@@ -3300,6 +3470,38 @@ ALTER TABLE ONLY public.backup_snapshot_links_org_4
 
 ALTER TABLE ONLY public.backup_snapshot_links_org_4
     ADD CONSTRAINT backup_snapshot_links_org_4_snapshot_data_id_fkey FOREIGN KEY (snapshot_data_id) REFERENCES public.backup_snapshot_data_org_4(snapshot_data_id) ON DELETE CASCADE;
+
+
+--
+-- Name: backup_snapshot_links_org_5 backup_snapshot_links_org_5_backup_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_links_org_5
+    ADD CONSTRAINT backup_snapshot_links_org_5_backup_id_fkey FOREIGN KEY (backup_id) REFERENCES public.backups(backup_id) ON DELETE CASCADE;
+
+
+--
+-- Name: backup_snapshot_links_org_5 backup_snapshot_links_org_5_snapshot_data_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_links_org_5
+    ADD CONSTRAINT backup_snapshot_links_org_5_snapshot_data_id_fkey FOREIGN KEY (snapshot_data_id) REFERENCES public.backup_snapshot_data_org_5(snapshot_data_id) ON DELETE CASCADE;
+
+
+--
+-- Name: backup_snapshot_links_org_6 backup_snapshot_links_org_6_backup_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_links_org_6
+    ADD CONSTRAINT backup_snapshot_links_org_6_backup_id_fkey FOREIGN KEY (backup_id) REFERENCES public.backups(backup_id) ON DELETE CASCADE;
+
+
+--
+-- Name: backup_snapshot_links_org_6 backup_snapshot_links_org_6_snapshot_data_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.backup_snapshot_links_org_6
+    ADD CONSTRAINT backup_snapshot_links_org_6_snapshot_data_id_fkey FOREIGN KEY (snapshot_data_id) REFERENCES public.backup_snapshot_data_org_6(snapshot_data_id) ON DELETE CASCADE;
 
 
 --
@@ -3762,5 +3964,5 @@ ALTER TABLE ONLY public.user_verification_tokens
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 5kk6hwaudWT80P1J6MBTyPCP4Zq2giofXvrktHQCBbQoQffPKupLTdz3Nzhh3vk
+\unrestrict L8VhoKtjyHnfD0iJfbGhS3sW7FtB2XIZLsDz6QKlIwL4W4Mjj7dej3fglyla4Lx
 
