@@ -9,7 +9,11 @@ from api_client import (
     list_mcu_variants, create_mcu_variant, list_gpio_pins, add_gpio_pin,
     list_module_compatibility, add_module_compatibility, delete_module_compatibility,
     list_support_grants, start_support_session, end_support_session,
+    list_battery_profiles, create_battery_profile, add_battery_discharge_point,
+    list_platform_events,
 )
+
+BATTERY_CHEMISTRIES = ["li-ion", "lipo", "nimh", "alkaline", "cr2032"]
 
 st.set_page_config(page_title="WatchDog Admin Portal", page_icon="favicon.ico", layout="wide")
 inject_css()
@@ -31,8 +35,8 @@ st.caption("Platform-level hardware catalog and support tooling — visible only
 if in_support_view:
     st.warning("You're inside a Support Access session — end it below before making catalog changes here.")
 
-tab_registry, tab_modules, tab_mcu, tab_compat, tab_support = st.tabs(
-    ["Device Registry", "Sensor Modules", "MCU Variants & GPIO", "Module Compatibility", "Support Access"]
+tab_registry, tab_modules, tab_mcu, tab_compat, tab_battery, tab_support, tab_platform_audit = st.tabs(
+    ["Device Registry", "Sensor Modules", "MCU Variants & GPIO", "Module Compatibility", "Battery Profiles", "Support Access", "Platform Audit"]
 )
 
 # =====================================================================================
@@ -282,6 +286,90 @@ with tab_compat:
                             st.error(f"Could not add: {e.detail}")
 
 # =====================================================================================
+# Battery Profiles — chemistry + discharge curve catalog (FE-8)
+# =====================================================================================
+with tab_battery:
+    st.markdown("### Battery Profiles")
+    st.caption(
+        "Reference battery chemistries with discharge curves, selectable per Node Template "
+        "(default) and per device (override) in Configuration. Curves are generic published "
+        "approximations for the chemistry shown, not manufacturer-specific datasheet values."
+    )
+    try:
+        battery_profiles = list_battery_profiles(token).get("battery_profiles", [])
+    except ApiError as e:
+        battery_profiles = []
+        st.error(f"Could not load battery profiles: {e.detail}")
+
+    if battery_profiles:
+        for p in battery_profiles:
+            with st.expander(
+                f"{p['name']} — {p['chemistry']}, "
+                f"{'rechargeable' if p['is_rechargeable'] else 'not rechargeable'}, "
+                f"{len(p['discharge_points'])} discharge point(s)"
+            ):
+                st.write(
+                    f"Nominal: {p['nominal_voltage_mv'] / 1000:.2f}V — "
+                    f"Range: {p['min_voltage_mv'] / 1000:.2f}V to {p['max_voltage_mv'] / 1000:.2f}V — "
+                    f"Cells: {p['cell_count']}"
+                )
+                if p.get("notes"):
+                    st.caption(p["notes"])
+                if p["discharge_points"]:
+                    st.dataframe(
+                        [{"Voltage (V)": pt["voltage_mv"] / 1000, "Percentage": pt["percentage"]} for pt in p["discharge_points"]],
+                        hide_index=True, width="stretch",
+                    )
+                else:
+                    st.caption("No discharge points recorded yet.")
+
+                st.markdown("**Add a discharge point**")
+                dp_key = f"battery_{p['battery_profile_id']}"
+                dpc1, dpc2, dpc3 = st.columns([2, 2, 1])
+                with dpc1:
+                    voltage_v = st.number_input("Voltage (V)", min_value=0.0, step=0.01, key=f"{dp_key}_v")
+                with dpc2:
+                    percentage = st.number_input("Percentage (0-100)", min_value=0, max_value=100, step=1, key=f"{dp_key}_pct")
+                with dpc3:
+                    st.write("")
+                    if st.button("Add Point", key=f"{dp_key}_add", disabled=in_support_view):
+                        try:
+                            add_battery_discharge_point(token, p["battery_profile_id"], round(voltage_v * 1000), int(percentage))
+                            st.success("Discharge point saved.")
+                            st.rerun()
+                        except ApiError as e:
+                            st.error(f"Could not add point: {e.detail}")
+    else:
+        st.info("No battery profiles yet — add one below.")
+
+    with st.expander("Add a new battery profile"):
+        with st.form("create_battery_profile_form", border=False):
+            name = st.text_input("Name*")
+            chemistry = st.selectbox("Chemistry*", BATTERY_CHEMISTRIES)
+            is_rechargeable = st.checkbox("Rechargeable", value=chemistry in ("li-ion", "lipo", "nimh"))
+            cell_count = st.number_input("Cell count", min_value=1, value=1, step=1)
+            nominal_v = st.number_input("Nominal voltage (V)", min_value=0.0, value=3.7, step=0.1)
+            min_v = st.number_input("Minimum voltage (V)", min_value=0.0, value=3.0, step=0.1)
+            max_v = st.number_input("Maximum voltage (V)", min_value=0.0, value=4.2, step=0.1)
+            notes = st.text_input("Notes (optional)")
+            submitted = st.form_submit_button("Create Battery Profile", type="primary", disabled=in_support_view)
+        if submitted:
+            if not name.strip():
+                st.error("Name is required.")
+            else:
+                try:
+                    create_battery_profile(
+                        token, name=name.strip(), chemistry=chemistry, is_rechargeable=is_rechargeable,
+                        cell_count=int(cell_count), nominal_voltage_mv=round(nominal_v * 1000),
+                        min_voltage_mv=round(min_v * 1000), max_voltage_mv=round(max_v * 1000),
+                        notes=notes or None,
+                    )
+                    st.success(f"Battery profile '{name}' created.")
+                    st.rerun()
+                except ApiError as e:
+                    st.error(f"Could not create battery profile: {e.detail}")
+
+# =====================================================================================
 # Support Access — WatchDog staff side
 # =====================================================================================
 with tab_support:
@@ -323,3 +411,92 @@ with tab_support:
                             st.error(f"Could not start session: {e.detail}")
         else:
             st.info("No active Support Access grants right now.")
+
+# =====================================================================================
+# Platform Audit — cross-org tenant events + platform-catalog events
+# =====================================================================================
+with tab_platform_audit:
+    st.markdown("### Platform Audit Log")
+    st.caption("Cross-organisation tenant activity, plus WatchDog staff catalog changes (MCU variants, device registry, etc).")
+
+    if "platform_audit_offset" not in st.session_state:
+        st.session_state.platform_audit_offset = 0
+
+    with st.form("platform_audit_filters_form"):
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        with fc1:
+            pa_event_type = st.text_input("Event type (exact match)", value="")
+        with fc2:
+            pa_org_id = st.number_input("Org ID (optional)", min_value=0, value=0)
+        with fc3:
+            pa_start_date = st.date_input("From", value=None, key="pa_start")
+        with fc4:
+            pa_end_date = st.date_input("To", value=None, key="pa_end")
+        pa_filters_submitted = st.form_submit_button("Apply Filters")
+    if pa_filters_submitted:
+        st.session_state.platform_audit_offset = 0
+
+    pa_page_size = 50
+    try:
+        pa_result = list_platform_events(
+            token,
+            event_type=pa_event_type or None,
+            org_id=pa_org_id or None,
+            start_date=pa_start_date.isoformat() if pa_start_date else None,
+            end_date=pa_end_date.isoformat() if pa_end_date else None,
+            limit=pa_page_size,
+            offset=st.session_state.platform_audit_offset,
+        )
+        pa_org_events = pa_result.get("org_events", [])
+        pa_platform_events = pa_result.get("platform_events", [])
+    except ApiError as e:
+        pa_org_events, pa_platform_events = [], []
+        st.error(f"Could not load platform audit log: {e.detail}")
+
+    st.markdown("#### Tenant Org Events")
+    if not pa_org_events:
+        st.info("No tenant events found for the current filters.")
+    else:
+        for ev in pa_org_events:
+            c1, c2, c3, c4 = st.columns([2, 2, 3, 2])
+            with c1:
+                st.write(f"**{ev['event_type']}**")
+                st.caption(ev.get("created_at", "—"))
+            with c2:
+                st.caption(f"{ev.get('org_name', '—')} (#{ev['org_id']})")
+            with c3:
+                st.write(f"{ev['target_type']} `{ev.get('target_id') or '—'}`")
+                if ev.get("details"):
+                    st.caption(str(ev["details"]))
+            with c4:
+                st.caption(f"actor: user #{ev['actor_user_id']}" if ev.get("actor_user_id") else "actor: system")
+            st.markdown("---")
+
+    pc1, pc2, pc3 = st.columns([1, 1, 4])
+    with pc1:
+        if st.button("Previous", disabled=st.session_state.platform_audit_offset == 0, key="pa_prev"):
+            st.session_state.platform_audit_offset = max(0, st.session_state.platform_audit_offset - pa_page_size)
+            st.rerun()
+    with pc2:
+        if st.button("Next", disabled=len(pa_org_events) < pa_page_size, key="pa_next"):
+            st.session_state.platform_audit_offset += pa_page_size
+            st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### Platform Catalog Events")
+    st.caption("WatchDog staff changes to MCU variants, battery profiles, device registry, sensor modules, and module compatibility.")
+    if not pa_platform_events:
+        st.info("No platform catalog events found for the current filters.")
+    else:
+        for ev in pa_platform_events:
+            c1, c2, c3 = st.columns([2, 3, 2])
+            with c1:
+                st.write(f"**{ev['event_type']}**")
+                st.caption(ev.get("created_at", "—"))
+            with c2:
+                st.write(f"{ev['target_type']} `{ev.get('target_id') or '—'}`")
+                if ev.get("details"):
+                    st.caption(str(ev["details"]))
+            with c3:
+                st.caption(f"actor: user #{ev['actor_user_id']}" if ev.get("actor_user_id") else "actor: system")
+            st.markdown("---")

@@ -205,6 +205,23 @@ def run_gdpr_deletion_sweep(cur):
         )
 
 
+def sweep_stale_support_sessions(cur) -> int:
+    """API-7: a support_access_session with no /end call just sits ended_at IS NULL
+    forever once its underlying grant expires or is revoked -- harmless functionally
+    since get_current_user() already revalidates grant liveness per-request against the
+    support_view JWT, but the table doesn't self-clean without this. Closes any open
+    session whose grant is no longer live. Returns the count closed, for logging."""
+    cur.execute(
+        """
+        UPDATE support_access_sessions s SET ended_at = NOW()
+        FROM support_access_grants g
+        WHERE s.grant_id = g.grant_id AND s.ended_at IS NULL
+          AND (g.expires_at <= NOW() OR g.revoked_at IS NOT NULL);
+        """
+    )
+    return cur.rowcount
+
+
 def get_all_org_ids(cur) -> list[int]:
     cur.execute("SELECT org_id FROM organisations;")
     return [r[0] for r in cur.fetchall()]

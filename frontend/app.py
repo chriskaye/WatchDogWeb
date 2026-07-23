@@ -28,13 +28,14 @@ link_pages = [verify_page, set_password_page, unlock_page, confirm_delete_page, 
 # ---------- LOGGED-IN NAVIGATION ----------
 dashboard_page = st.Page("screens/dashboard.py", title="Dashboard", default=True)
 configuration_page = st.Page("screens/configuration.py", title="Configuration")
+reports_page = st.Page("screens/reports.py", title="Reports")
 users_page = st.Page("screens/users.py", title="Users & Groups")
 settings_page = st.Page("screens/settings.py", title="Settings")
 admin_portal_page = st.Page("screens/admin_portal.py", title="WatchDog Admin Portal")
 about_page = st.Page("screens/about.py", title="About")
 
 if st.session_state.logged_in:
-    pages = [dashboard_page, configuration_page, users_page, settings_page]
+    pages = [dashboard_page, configuration_page, reports_page, users_page, settings_page]
     # Platform admin is a flat users.is_watchdog_admin flag, structurally separate from
     # org-level roles — see role model notes in the outstanding tasks doc. Only show the
     # catalog/support-staff portal to accounts that actually hold it.

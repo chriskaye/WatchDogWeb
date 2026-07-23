@@ -10,7 +10,8 @@ from api_client import (
     enable_support_access, revoke_support_access, get_support_access_status,
     request_self_delete,
     request_org_deletion,
-    create_backup, restore_backup, list_backups, update_backup_settings,
+    create_backup, restore_backup, list_backups, get_backup_settings, update_backup_settings,
+    list_events,
 )
 # NOTE: confirm_self_delete/cancel_org_deletion are consumed by email-link confirmation
 # pages, not this screen — those need dedicated ?token= handlers (see landing.py's
@@ -41,14 +42,17 @@ if in_support_view:
 tab_names = ["Profile", "Appearance", "Login & Security"]
 if is_global_admin:
     tab_names.append("Backups")
+    tab_names.append("Audit Log")
 tab_names.append("Danger Zone")
 tabs = st.tabs(tab_names)
 tab_profile, tab_theme, tab_security = tabs[0], tabs[1], tabs[2]
 if is_global_admin:
     tab_backups = tabs[3]
-    tab_danger = tabs[4]
+    tab_audit_log = tabs[4]
+    tab_danger = tabs[5]
 else:
     tab_backups = None
+    tab_audit_log = None
     tab_danger = tabs[3]
 
 # =====================================================================================
@@ -292,16 +296,18 @@ if tab_backups is not None:
 
         st.markdown("---")
         st.markdown("### Backup Settings")
-        st.caption(
-            "There's no `GET` endpoint for backup settings yet, so this form can't show your "
-            "org's current values — it only sets new ones. Flagging rather than silently "
-            "showing stale/wrong defaults as if they were current."
-        )
+        try:
+            current_settings = get_backup_settings(token)
+        except ApiError as e:
+            current_settings = None
+            st.error(f"Could not load current backup settings: {e.detail}")
+        if current_settings and not current_settings.get("configured"):
+            st.caption("Not configured yet — showing defaults. Save below to set your org's actual values.")
         with st.form("backup_settings_form"):
-            is_enabled = st.checkbox("Automatic backups enabled")
-            daily = st.number_input("Daily retention count", min_value=0, value=7)
-            weekly = st.number_input("Weekly retention count", min_value=0, value=4)
-            monthly = st.number_input("Monthly retention count", min_value=0, value=3)
+            is_enabled = st.checkbox("Automatic backups enabled", value=(current_settings or {}).get("is_enabled", False))
+            daily = st.number_input("Daily retention count", min_value=0, value=(current_settings or {}).get("daily_retention_count", 7))
+            weekly = st.number_input("Weekly retention count", min_value=0, value=(current_settings or {}).get("weekly_retention_count", 4))
+            monthly = st.number_input("Monthly retention count", min_value=0, value=(current_settings or {}).get("monthly_retention_count", 3))
             settings_submitted = st.form_submit_button("Save Backup Settings", disabled=in_support_view)
         if settings_submitted:
             try:
@@ -310,8 +316,72 @@ if tab_backups is not None:
                     weekly_retention_count=weekly, monthly_retention_count=monthly,
                 )
                 st.success("Backup settings saved.")
+                st.rerun()
             except ApiError as e:
                 st.error(f"Could not save backup settings: {e.detail}")
+
+# =====================================================================================
+# Audit Log (Global Admin only — matches the API's own gate)
+# =====================================================================================
+if tab_audit_log is not None:
+    with tab_audit_log:
+        st.markdown("### Audit Log")
+        st.caption("A record of account, device, and configuration actions taken within your organisation.")
+
+        if "audit_log_offset" not in st.session_state:
+            st.session_state.audit_log_offset = 0
+
+        with st.form("audit_log_filters_form"):
+            fc1, fc2, fc3 = st.columns(3)
+            with fc1:
+                filter_event_type = st.text_input("Event type (exact match)", value="")
+            with fc2:
+                filter_start_date = st.date_input("From", value=None)
+            with fc3:
+                filter_end_date = st.date_input("To", value=None)
+            filters_submitted = st.form_submit_button("Apply Filters")
+        if filters_submitted:
+            st.session_state.audit_log_offset = 0
+
+        page_size = 50
+        try:
+            events = list_events(
+                token,
+                event_type=filter_event_type or None,
+                start_date=filter_start_date.isoformat() if filter_start_date else None,
+                end_date=filter_end_date.isoformat() if filter_end_date else None,
+                limit=page_size,
+                offset=st.session_state.audit_log_offset,
+            ).get("events", [])
+        except ApiError as e:
+            events = []
+            st.error(f"Could not load audit log: {e.detail}")
+
+        if not events:
+            st.info("No events found for the current filters.")
+        else:
+            for ev in events:
+                c1, c2, c3 = st.columns([2, 3, 2])
+                with c1:
+                    st.write(f"**{ev['event_type']}**")
+                    st.caption(ev.get("created_at", "—"))
+                with c2:
+                    st.write(f"{ev['target_type']} `{ev.get('target_id') or '—'}`")
+                    if ev.get("details"):
+                        st.caption(str(ev["details"]))
+                with c3:
+                    st.caption(f"actor: user #{ev['actor_user_id']}" if ev.get("actor_user_id") else "actor: system")
+                st.markdown("---")
+
+        pc1, pc2, pc3 = st.columns([1, 1, 4])
+        with pc1:
+            if st.button("Previous", disabled=st.session_state.audit_log_offset == 0):
+                st.session_state.audit_log_offset = max(0, st.session_state.audit_log_offset - page_size)
+                st.rerun()
+        with pc2:
+            if st.button("Next", disabled=len(events) < page_size):
+                st.session_state.audit_log_offset += page_size
+                st.rerun()
 
 # =====================================================================================
 # Danger Zone

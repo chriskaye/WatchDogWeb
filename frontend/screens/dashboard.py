@@ -2,8 +2,12 @@ from datetime import datetime, timedelta
 import streamlit as st
 from session import do_logout, get_active_token
 from style import inject_css, badge
+from battery import estimate_percentage, profile_by_id
 import pandas as pd
-from api_client import ApiError, list_sites, list_gateways, list_sensors, list_alerts, get_sensor_readings
+from api_client import (
+    ApiError, list_sites, list_gateways, list_sensors, list_alerts, get_sensor_readings,
+    list_battery_profiles,
+)
 
 st.set_page_config(page_title="Dashboard", page_icon="favicon.ico", layout="wide")
 inject_css()
@@ -95,9 +99,48 @@ else:
 
 st.markdown("---")
 
+def _latest_glance(serial_number, profile_by_id_lookup, battery_profile_id):
+    """RPT-3: at-a-glance status for a device row in Sites Overview — last-seen recency,
+    latest temp/humidity, and estimated battery % if a profile is assigned. One lightweight
+    readings call per device; fine at current fleet sizes, revisit if this page gets slow
+    with large fleets (same scale caveat as RPT-1 itself)."""
+    from_date = (datetime.utcnow() - timedelta(days=30)).isoformat()
+    try:
+        readings = get_sensor_readings(get_active_token(), serial_number, from_date=from_date, limit=1).get("readings", [])
+    except ApiError:
+        readings = []
+    if not readings:
+        return "No readings in the last 30 days"
+    r = readings[0]
+    ts = datetime.fromisoformat(r["ts"]).replace(tzinfo=None)
+    age = datetime.utcnow() - ts
+    if age < timedelta(hours=1):
+        freshness = f"{int(age.total_seconds() // 60)}m ago"
+    elif age < timedelta(days=1):
+        freshness = f"{int(age.total_seconds() // 3600)}h ago"
+    else:
+        freshness = f"{age.days}d ago"
+    parts = [f"Last seen {freshness}"]
+    if r.get("temperature") is not None:
+        parts.append(f"{r['temperature']:.1f}°C")
+    if r.get("humidity") is not None:
+        parts.append(f"{r['humidity']:.0f}% RH")
+    if r.get("battery") is not None:
+        profile = profile_by_id_lookup.get(battery_profile_id)
+        pct = estimate_percentage(r["battery"], profile["discharge_points"]) if profile else None
+        parts.append(f"{pct:.0f}% batt" if pct is not None else f"{r['battery']:.2f}V batt")
+    return " · ".join(parts)
+
+
 if not sites:
     st.info("No sites yet. Head to **Configuration → Sites** to create your first one, then provision a gateway or sensor.")
 else:
+    try:
+        overview_battery_profiles = list_battery_profiles(token).get("battery_profiles", [])
+    except ApiError:
+        overview_battery_profiles = []
+    overview_profile_by_id = profile_by_id(overview_battery_profiles)
+
     st.markdown("### Sites Overview")
     site_by_id = {s["site_id"]: s for s in sites}
     for site in sites:
@@ -111,33 +154,44 @@ else:
                 for g in site_gateways:
                     gb = badge("Active", "ok") if g["is_active"] else badge("Inactive", "muted")
                     st.markdown(f"- {g['name'] or g['gateway_id']} {gb}", unsafe_allow_html=True)
+                    st.caption(_latest_glance(g["serial_number"], overview_profile_by_id, g.get("battery_profile_id")))
             if site_sensors:
                 st.markdown("**Sensors**")
                 for s in site_sensors:
                     sb = badge("Active", "ok") if s["is_active"] else badge("Inactive", "muted")
                     st.markdown(f"- {s['name'] or s['sensor_id']} ({s.get('location') or 'no location'}) {sb}", unsafe_allow_html=True)
+                    st.caption(_latest_glance(s["serial_number"], overview_profile_by_id, s.get("battery_profile_id")))
             if not site_gateways and not site_sensors:
                 st.caption("No devices provisioned at this site yet.")
 
     st.markdown("---")
     st.markdown("### Recent readings")
     all_devices = (
-        [{"label": f"{g['name'] or g['gateway_id']} (gateway)", "serial_number": g["serial_number"]} for g in gateways]
-        + [{"label": f"{s['name'] or s['sensor_id']} (sensor)", "serial_number": s["serial_number"]} for s in sensors]
+        [{"label": f"{g['name'] or g['gateway_id']} (gateway)", "serial_number": g["serial_number"],
+          "battery_profile_id": g.get("battery_profile_id")} for g in gateways]
+        + [{"label": f"{s['name'] or s['sensor_id']} (sensor)", "serial_number": s["serial_number"],
+            "battery_profile_id": s.get("battery_profile_id")} for s in sensors]
     )
     if not all_devices:
         st.caption("No devices provisioned yet.")
     else:
-        device_by_label = {d["label"]: d["serial_number"] for d in all_devices}
+        try:
+            battery_profiles = list_battery_profiles(token).get("battery_profiles", [])
+        except ApiError:
+            battery_profiles = []
+        battery_profile_by_id = profile_by_id(battery_profiles)
+
+        device_by_label = {d["label"]: d for d in all_devices}
         chosen_label = st.selectbox("Device", list(device_by_label.keys()), key="readings_device_select")
-        # I edited this to show more granular timeframes, 1h, 6h, 12h 
+        chosen_device = device_by_label[chosen_label]
+        # I edited this to show more granular timeframes, 1h, 6h, 12h
         window_label = st.radio("Window", ["Last 1h", "Last 6h", "Last 12h", "Last 24h", "Last 7 days", "Last 30 days"], horizontal=True, key="readings_window")
         window_hours = {"Last 1h":1, "Last 6h":6, "Last 12h":12, "Last 24h": 24, "Last 7 days": 24 * 7, "Last 30 days": 24 * 30}[window_label]
         from_date = (datetime.utcnow() - timedelta(hours=window_hours)).isoformat()
 
         try:
             readings = get_sensor_readings(
-                token, device_by_label[chosen_label], from_date=from_date, limit=2000,
+                token, chosen_device["serial_number"], from_date=from_date, limit=2000,
             ).get("readings", [])
         except ApiError as e:
             readings = []
@@ -155,3 +209,33 @@ else:
             if "motion" in df.columns and df["motion"].notna().any():
                 st.caption("Motion (most recent readings)")
                 st.dataframe(df[["motion"]].tail(50).iloc[::-1], width="stretch")
+
+            if "battery" in df.columns and df["battery"].notna().any():
+                st.markdown("#### Battery")
+                profile = battery_profile_by_id.get(chosen_device["battery_profile_id"])
+                if not profile:
+                    st.caption(
+                        "No battery type set for this device — add one in Configuration → "
+                        "Devices to see an estimated remaining-charge percentage here "
+                        "(or set it to 'Not powered by batteries' if it's mains/PoE-powered)."
+                    )
+                else:
+                    latest_voltage = df["battery"].dropna().iloc[-1]
+                    latest_pct = estimate_percentage(latest_voltage, profile["discharge_points"])
+                    mc1, mc2 = st.columns(2)
+                    with mc1:
+                        st.metric("Latest voltage", f"{latest_voltage:.2f} V")
+                    with mc2:
+                        st.metric(
+                            "Estimated remaining charge",
+                            f"{latest_pct:.0f}%" if latest_pct is not None else "—",
+                        )
+                    pct_series = df["battery"].apply(
+                        lambda v: estimate_percentage(v, profile["discharge_points"]) if pd.notna(v) else None
+                    )
+                    if pct_series.notna().any():
+                        st.line_chart(pct_series.rename("estimated %"))
+                    st.caption(
+                        f"Against the '{profile['name']}' discharge curve — a generic approximation "
+                        "for this chemistry, not a manufacturer-specific datasheet value."
+                    )

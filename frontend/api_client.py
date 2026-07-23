@@ -247,6 +247,38 @@ def get_sensor_readings(access_token, serial_number, from_date=None, to_date=Non
 
 
 # =====================================================================================
+# Reports (report_templates, user_reports)
+# =====================================================================================
+
+def list_report_templates(access_token):
+    return _request("GET", "/report_templates", token=access_token)
+
+
+def list_user_reports(access_token):
+    return _request("GET", "/user_reports", token=access_token)
+
+
+def create_user_report(access_token, report_template_id, name, config=None):
+    return _request(
+        "POST", "/user_reports", token=access_token,
+        json={"report_template_id": report_template_id, "name": name, "config": config or {}},
+    )
+
+
+def update_user_report(access_token, user_report_id, name=None, config=None):
+    body = {}
+    if name is not None:
+        body["name"] = name
+    if config is not None:
+        body["config"] = config
+    return _request("PUT", f"/user_reports/{user_report_id}", token=access_token, json=body)
+
+
+def delete_user_report(access_token, user_report_id):
+    return _request("DELETE", f"/user_reports/{user_report_id}", token=access_token)
+
+
+# =====================================================================================
 # Node Templates (org-level)
 # =====================================================================================
 
@@ -333,8 +365,16 @@ def list_backups(access_token):
     return _request("GET", "/backups", token=access_token)
 
 
+def get_backup_settings(access_token):
+    return _request("GET", "/backups/settings", token=access_token)
+
+
 def update_backup_settings(access_token, **fields):
     return _request("POST", "/backups/settings", token=access_token, json=fields)
+
+
+def run_scheduler_job(access_token, job_id):
+    return _request("POST", "/scheduler/run", token=access_token, json={"job_id": job_id})
 
 
 # =====================================================================================
@@ -371,6 +411,10 @@ def get_support_access_status(access_token):
 
 def list_support_grants(access_token):
     return _request("GET", "/support-access/grants", token=access_token)
+
+
+def list_my_support_sessions(access_token):
+    return _request("GET", "/support-access/sessions/mine", token=access_token)
 
 
 def start_support_session(access_token, grant_id):
@@ -436,6 +480,35 @@ def delete_sensor_module_type(access_token, module_type_id):
     return _request("DELETE", f"/sensor_module_types/{module_type_id}", token=access_token)
 
 
+def list_battery_profiles(access_token):
+    return _request("GET", "/battery_profiles", token=access_token)
+
+
+def create_battery_profile(access_token, **fields):
+    return _request("POST", "/battery_profiles", token=access_token, json=fields)
+
+
+def add_battery_discharge_point(access_token, battery_profile_id, voltage_mv, percentage):
+    return _request(
+        "POST", f"/battery_profiles/{battery_profile_id}/discharge_points", token=access_token,
+        json={"voltage_mv": voltage_mv, "percentage": percentage},
+    )
+
+
+def set_gateway_battery_profile(access_token, gateway_id, battery_profile_id):
+    return _request(
+        "POST", f"/gateways/{gateway_id}/battery_profile", token=access_token,
+        json={"battery_profile_id": battery_profile_id},
+    )
+
+
+def set_sensor_battery_profile(access_token, sensor_id, battery_profile_id):
+    return _request(
+        "POST", f"/sensors/{sensor_id}/battery_profile", token=access_token,
+        json={"battery_profile_id": battery_profile_id},
+    )
+
+
 def list_mcu_variants(access_token):
     return _request("GET", "/mcu_variants", token=access_token)
 
@@ -486,6 +559,52 @@ def list_module_pin_gpio_assignments(access_token, pin_id):
 
 def add_module_pin_gpio_assignment(access_token, pin_id, **fields):
     return _request("POST", f"/node_templates/module_pins/{pin_id}/gpio_pins", token=access_token, json=fields)
+
+
+# =====================================================================================
+# Audit Log
+# =====================================================================================
+
+def list_events(access_token, event_type=None, target_type=None, actor_user_id=None,
+                 start_date=None, end_date=None, limit=None, offset=None):
+    params = {}
+    if event_type:
+        params["event_type"] = event_type
+    if target_type:
+        params["target_type"] = target_type
+    if actor_user_id:
+        params["actor_user_id"] = actor_user_id
+    if start_date:
+        params["start_date"] = start_date
+    if end_date:
+        params["end_date"] = end_date
+    if limit:
+        params["limit"] = limit
+    if offset:
+        params["offset"] = offset
+    return _request("GET", "/events", token=access_token, params=params or None)
+
+
+def list_platform_events(access_token, event_type=None, target_type=None, actor_user_id=None,
+                          org_id=None, start_date=None, end_date=None, limit=None, offset=None):
+    params = {}
+    if event_type:
+        params["event_type"] = event_type
+    if target_type:
+        params["target_type"] = target_type
+    if actor_user_id:
+        params["actor_user_id"] = actor_user_id
+    if org_id:
+        params["org_id"] = org_id
+    if start_date:
+        params["start_date"] = start_date
+    if end_date:
+        params["end_date"] = end_date
+    if limit:
+        params["limit"] = limit
+    if offset:
+        params["offset"] = offset
+    return _request("GET", "/events/platform", token=access_token, params=params or None)
 
 
 def delete_module_pin_gpio_assignment(access_token, pin_id, gpio_assignment_id):

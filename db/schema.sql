@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ESrRdqAzU9Y4qPkraAo6tr3SpvX5uca9NWoQo8hqcFxKqMph01d6ZT3TpJEgdG2
+\restrict 5kk6hwaudWT80P1J6MBTyPCP4Zq2giofXvrktHQCBbQoQffPKupLTdz3Nzhh3vk
 
 -- Dumped from database version 18.4 (Debian 18.4-1.pgdg13+1)
 -- Dumped by pg_dump version 18.4 (Debian 18.4-1.pgdg13+1)
@@ -225,6 +225,14 @@ BEGIN
     EXECUTE format('
         CREATE INDEX IF NOT EXISTS %I ON public.%I (event_type);
     ', tbl_name || '_type_idx', tbl_name);
+
+    EXECUTE format('
+        CREATE INDEX IF NOT EXISTS %I ON public.%I (created_at);
+    ', tbl_name || '_created_at_idx', tbl_name);
+
+    EXECUTE format('
+        CREATE INDEX IF NOT EXISTS %I ON public.%I (actor_user_id);
+    ', tbl_name || '_actor_idx', tbl_name);
 END;
 $$;
 
@@ -846,6 +854,86 @@ ALTER SEQUENCE public.backups_id_seq OWNED BY public.backups.backup_id;
 
 
 --
+-- Name: battery_discharge_points; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.battery_discharge_points (
+    battery_discharge_point_id integer NOT NULL,
+    battery_profile_id integer NOT NULL,
+    voltage_mv integer NOT NULL,
+    percentage integer NOT NULL,
+    CONSTRAINT battery_discharge_points_percentage_check CHECK (((percentage >= 0) AND (percentage <= 100)))
+);
+
+
+ALTER TABLE public.battery_discharge_points OWNER TO psql_admin;
+
+--
+-- Name: battery_discharge_points_battery_discharge_point_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.battery_discharge_points_battery_discharge_point_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.battery_discharge_points_battery_discharge_point_id_seq OWNER TO psql_admin;
+
+--
+-- Name: battery_discharge_points_battery_discharge_point_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.battery_discharge_points_battery_discharge_point_id_seq OWNED BY public.battery_discharge_points.battery_discharge_point_id;
+
+
+--
+-- Name: battery_profiles; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.battery_profiles (
+    battery_profile_id integer NOT NULL,
+    name text NOT NULL,
+    chemistry text NOT NULL,
+    is_rechargeable boolean DEFAULT true NOT NULL,
+    cell_count integer DEFAULT 1 NOT NULL,
+    nominal_voltage_mv integer NOT NULL,
+    min_voltage_mv integer NOT NULL,
+    max_voltage_mv integer NOT NULL,
+    notes text,
+    created_at timestamp without time zone DEFAULT now(),
+    CONSTRAINT battery_profiles_chemistry_check CHECK ((chemistry = ANY (ARRAY['li-ion'::text, 'lipo'::text, 'nimh'::text, 'alkaline'::text, 'cr2032'::text])))
+);
+
+
+ALTER TABLE public.battery_profiles OWNER TO psql_admin;
+
+--
+-- Name: battery_profiles_battery_profile_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.battery_profiles_battery_profile_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.battery_profiles_battery_profile_id_seq OWNER TO psql_admin;
+
+--
+-- Name: battery_profiles_battery_profile_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.battery_profiles_battery_profile_id_seq OWNED BY public.battery_profiles.battery_profile_id;
+
+
+--
 -- Name: crypto_profiles; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
@@ -1015,7 +1103,8 @@ CREATE TABLE public.gateways (
     crypto_id integer,
     org_id integer,
     site_id integer,
-    serial_number text
+    serial_number text,
+    battery_profile_id integer
 );
 
 
@@ -1218,7 +1307,8 @@ CREATE TABLE public.node_templates (
     packet_crypto_id integer,
     created_by integer,
     created_at timestamp without time zone DEFAULT now(),
-    alert_template_id integer
+    alert_template_id integer,
+    battery_profile_id integer
 );
 
 
@@ -1519,6 +1609,82 @@ ALTER SEQUENCE public.ota_jobs_ota_id_seq OWNED BY public.ota_jobs.ota_id;
 
 
 --
+-- Name: platform_event_log; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.platform_event_log (
+    event_id bigint NOT NULL,
+    event_type text NOT NULL,
+    actor_user_id integer,
+    target_type text NOT NULL,
+    target_id text,
+    details jsonb,
+    created_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.platform_event_log OWNER TO psql_admin;
+
+--
+-- Name: platform_event_log_event_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.platform_event_log_event_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.platform_event_log_event_id_seq OWNER TO psql_admin;
+
+--
+-- Name: platform_event_log_event_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.platform_event_log_event_id_seq OWNED BY public.platform_event_log.event_id;
+
+
+--
+-- Name: report_templates; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.report_templates (
+    report_template_id integer NOT NULL,
+    key text NOT NULL,
+    name text NOT NULL,
+    description text,
+    category text NOT NULL,
+    created_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.report_templates OWNER TO psql_admin;
+
+--
+-- Name: report_templates_report_template_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.report_templates_report_template_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.report_templates_report_template_id_seq OWNER TO psql_admin;
+
+--
+-- Name: report_templates_report_template_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.report_templates_report_template_id_seq OWNED BY public.report_templates.report_template_id;
+
+
+--
 -- Name: role_hierarchy; Type: TABLE; Schema: public; Owner: psql_admin
 --
 
@@ -1662,7 +1828,8 @@ CREATE TABLE public.sensors (
     ota_status text,
     org_id integer,
     site_id integer,
-    serial_number text
+    serial_number text,
+    battery_profile_id integer
 );
 
 
@@ -1820,6 +1987,46 @@ ALTER SEQUENCE public.user_auth_methods_id_seq OWNER TO psql_admin;
 --
 
 ALTER SEQUENCE public.user_auth_methods_id_seq OWNED BY public.user_auth_methods.auth_id;
+
+
+--
+-- Name: user_reports; Type: TABLE; Schema: public; Owner: psql_admin
+--
+
+CREATE TABLE public.user_reports (
+    user_report_id integer NOT NULL,
+    org_id integer NOT NULL,
+    owner_user_id integer NOT NULL,
+    report_template_id integer NOT NULL,
+    name text NOT NULL,
+    config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp without time zone DEFAULT now(),
+    updated_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.user_reports OWNER TO psql_admin;
+
+--
+-- Name: user_reports_user_report_id_seq; Type: SEQUENCE; Schema: public; Owner: psql_admin
+--
+
+CREATE SEQUENCE public.user_reports_user_report_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE public.user_reports_user_report_id_seq OWNER TO psql_admin;
+
+--
+-- Name: user_reports_user_report_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: psql_admin
+--
+
+ALTER SEQUENCE public.user_reports_user_report_id_seq OWNED BY public.user_reports.user_report_id;
 
 
 --
@@ -2015,6 +2222,20 @@ ALTER TABLE ONLY public.backups ALTER COLUMN backup_id SET DEFAULT nextval('publ
 
 
 --
+-- Name: battery_discharge_points battery_discharge_point_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.battery_discharge_points ALTER COLUMN battery_discharge_point_id SET DEFAULT nextval('public.battery_discharge_points_battery_discharge_point_id_seq'::regclass);
+
+
+--
+-- Name: battery_profiles battery_profile_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.battery_profiles ALTER COLUMN battery_profile_id SET DEFAULT nextval('public.battery_profiles_battery_profile_id_seq'::regclass);
+
+
+--
 -- Name: crypto_profiles crypto_id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
@@ -2120,6 +2341,20 @@ ALTER TABLE ONLY public.ota_jobs ALTER COLUMN ota_id SET DEFAULT nextval('public
 
 
 --
+-- Name: platform_event_log event_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.platform_event_log ALTER COLUMN event_id SET DEFAULT nextval('public.platform_event_log_event_id_seq'::regclass);
+
+
+--
+-- Name: report_templates report_template_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.report_templates ALTER COLUMN report_template_id SET DEFAULT nextval('public.report_templates_report_template_id_seq'::regclass);
+
+
+--
 -- Name: sensor_capabilities id; Type: DEFAULT; Schema: public; Owner: psql_admin
 --
 
@@ -2166,6 +2401,13 @@ ALTER TABLE ONLY public.support_access_sessions ALTER COLUMN session_id SET DEFA
 --
 
 ALTER TABLE ONLY public.user_auth_methods ALTER COLUMN auth_id SET DEFAULT nextval('public.user_auth_methods_id_seq'::regclass);
+
+
+--
+-- Name: user_reports user_report_id; Type: DEFAULT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.user_reports ALTER COLUMN user_report_id SET DEFAULT nextval('public.user_reports_user_report_id_seq'::regclass);
 
 
 --
@@ -2291,6 +2533,30 @@ ALTER TABLE ONLY public.backup_snapshot_links_org_4
 
 ALTER TABLE ONLY public.backups
     ADD CONSTRAINT backups_pkey PRIMARY KEY (backup_id);
+
+
+--
+-- Name: battery_discharge_points battery_discharge_points_battery_profile_id_voltage_mv_key; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.battery_discharge_points
+    ADD CONSTRAINT battery_discharge_points_battery_profile_id_voltage_mv_key UNIQUE (battery_profile_id, voltage_mv);
+
+
+--
+-- Name: battery_discharge_points battery_discharge_points_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.battery_discharge_points
+    ADD CONSTRAINT battery_discharge_points_pkey PRIMARY KEY (battery_discharge_point_id);
+
+
+--
+-- Name: battery_profiles battery_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.battery_profiles
+    ADD CONSTRAINT battery_profiles_pkey PRIMARY KEY (battery_profile_id);
 
 
 --
@@ -2470,6 +2736,30 @@ ALTER TABLE ONLY public.ota_jobs
 
 
 --
+-- Name: platform_event_log platform_event_log_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.platform_event_log
+    ADD CONSTRAINT platform_event_log_pkey PRIMARY KEY (event_id);
+
+
+--
+-- Name: report_templates report_templates_key_key; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.report_templates
+    ADD CONSTRAINT report_templates_key_key UNIQUE (key);
+
+
+--
+-- Name: report_templates report_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.report_templates
+    ADD CONSTRAINT report_templates_pkey PRIMARY KEY (report_template_id);
+
+
+--
 -- Name: role_hierarchy role_hierarchy_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
@@ -2547,6 +2837,14 @@ ALTER TABLE ONLY public.support_access_sessions
 
 ALTER TABLE ONLY public.user_auth_methods
     ADD CONSTRAINT user_auth_methods_pkey PRIMARY KEY (auth_id);
+
+
+--
+-- Name: user_reports user_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.user_reports
+    ADD CONSTRAINT user_reports_pkey PRIMARY KEY (user_report_id);
 
 
 --
@@ -2688,10 +2986,38 @@ CREATE UNIQUE INDEX ntm_gpio_pins_unique_role ON public.node_template_module_gpi
 
 
 --
+-- Name: org_event_log_org_1_actor_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX org_event_log_org_1_actor_idx ON public.org_event_log_org_1 USING btree (actor_user_id);
+
+
+--
+-- Name: org_event_log_org_1_created_at_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX org_event_log_org_1_created_at_idx ON public.org_event_log_org_1 USING btree (created_at);
+
+
+--
 -- Name: org_event_log_org_1_type_idx; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
 CREATE INDEX org_event_log_org_1_type_idx ON public.org_event_log_org_1 USING btree (event_type);
+
+
+--
+-- Name: org_event_log_org_2_actor_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX org_event_log_org_2_actor_idx ON public.org_event_log_org_2 USING btree (actor_user_id);
+
+
+--
+-- Name: org_event_log_org_2_created_at_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX org_event_log_org_2_created_at_idx ON public.org_event_log_org_2 USING btree (created_at);
 
 
 --
@@ -2702,6 +3028,20 @@ CREATE INDEX org_event_log_org_2_type_idx ON public.org_event_log_org_2 USING bt
 
 
 --
+-- Name: org_event_log_org_3_actor_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX org_event_log_org_3_actor_idx ON public.org_event_log_org_3 USING btree (actor_user_id);
+
+
+--
+-- Name: org_event_log_org_3_created_at_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX org_event_log_org_3_created_at_idx ON public.org_event_log_org_3 USING btree (created_at);
+
+
+--
 -- Name: org_event_log_org_3_type_idx; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
@@ -2709,10 +3049,38 @@ CREATE INDEX org_event_log_org_3_type_idx ON public.org_event_log_org_3 USING bt
 
 
 --
+-- Name: org_event_log_org_4_actor_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX org_event_log_org_4_actor_idx ON public.org_event_log_org_4 USING btree (actor_user_id);
+
+
+--
+-- Name: org_event_log_org_4_created_at_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX org_event_log_org_4_created_at_idx ON public.org_event_log_org_4 USING btree (created_at);
+
+
+--
 -- Name: org_event_log_org_4_type_idx; Type: INDEX; Schema: public; Owner: psql_admin
 --
 
 CREATE INDEX org_event_log_org_4_type_idx ON public.org_event_log_org_4 USING btree (event_type);
+
+
+--
+-- Name: platform_event_log_created_at_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX platform_event_log_created_at_idx ON public.platform_event_log USING btree (created_at);
+
+
+--
+-- Name: platform_event_log_type_idx; Type: INDEX; Schema: public; Owner: psql_admin
+--
+
+CREATE INDEX platform_event_log_type_idx ON public.platform_event_log USING btree (event_type);
 
 
 --
@@ -2951,6 +3319,14 @@ ALTER TABLE ONLY public.backups
 
 
 --
+-- Name: battery_discharge_points battery_discharge_points_battery_profile_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.battery_discharge_points
+    ADD CONSTRAINT battery_discharge_points_battery_profile_id_fkey FOREIGN KEY (battery_profile_id) REFERENCES public.battery_profiles(battery_profile_id) ON DELETE CASCADE;
+
+
+--
 -- Name: crypto_profiles crypto_profiles_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
@@ -2996,6 +3372,14 @@ ALTER TABLE ONLY public.device_radios
 
 ALTER TABLE ONLY public.device_registry
     ADD CONSTRAINT device_registry_mcu_variant_id_fkey FOREIGN KEY (mcu_variant_id) REFERENCES public.mcu_variants(mcu_variant_id);
+
+
+--
+-- Name: gateways gateways_battery_profile_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.gateways
+    ADD CONSTRAINT gateways_battery_profile_id_fkey FOREIGN KEY (battery_profile_id) REFERENCES public.battery_profiles(battery_profile_id) ON DELETE SET NULL;
 
 
 --
@@ -3092,6 +3476,14 @@ ALTER TABLE ONLY public.mcu_variant_gpio_pins
 
 ALTER TABLE ONLY public.node_templates
     ADD CONSTRAINT node_templates_alert_template_id_fkey FOREIGN KEY (alert_template_id) REFERENCES public.alert_templates(alert_template_id);
+
+
+--
+-- Name: node_templates node_templates_battery_profile_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.node_templates
+    ADD CONSTRAINT node_templates_battery_profile_id_fkey FOREIGN KEY (battery_profile_id) REFERENCES public.battery_profiles(battery_profile_id) ON DELETE SET NULL;
 
 
 --
@@ -3223,6 +3615,14 @@ ALTER TABLE ONLY public.sensor_capabilities
 
 
 --
+-- Name: sensors sensors_battery_profile_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.sensors
+    ADD CONSTRAINT sensors_battery_profile_id_fkey FOREIGN KEY (battery_profile_id) REFERENCES public.battery_profiles(battery_profile_id) ON DELETE SET NULL;
+
+
+--
 -- Name: sensors sensors_gateway_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
 --
 
@@ -3268,6 +3668,30 @@ ALTER TABLE ONLY public.sites
 
 ALTER TABLE ONLY public.user_auth_methods
     ADD CONSTRAINT user_auth_methods_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_reports user_reports_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.user_reports
+    ADD CONSTRAINT user_reports_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.organisations(org_id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_reports user_reports_owner_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.user_reports
+    ADD CONSTRAINT user_reports_owner_user_id_fkey FOREIGN KEY (owner_user_id) REFERENCES public.users(user_id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_reports user_reports_report_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: psql_admin
+--
+
+ALTER TABLE ONLY public.user_reports
+    ADD CONSTRAINT user_reports_report_template_id_fkey FOREIGN KEY (report_template_id) REFERENCES public.report_templates(report_template_id);
 
 
 --
@@ -3338,5 +3762,5 @@ ALTER TABLE ONLY public.user_verification_tokens
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ESrRdqAzU9Y4qPkraAo6tr3SpvX5uca9NWoQo8hqcFxKqMph01d6ZT3TpJEgdG2
+\unrestrict 5kk6hwaudWT80P1J6MBTyPCP4Zq2giofXvrktHQCBbQoQffPKupLTdz3Nzhh3vk
 

@@ -7,11 +7,66 @@ from api_client import (
     list_gateways, list_sensors, soft_delete_gateway, soft_delete_sensor,
     check_device, activate_device, deprovision_device, factory_reset_device,
     list_node_templates, create_node_template, delete_node_template,
-    list_mcu_variants,
+    list_mcu_variants, list_gpio_pins,
+    list_sensor_module_types,
+    list_node_template_module_pins, add_node_template_module_pin, delete_node_template_module_pin,
+    list_module_pin_gpio_assignments, add_module_pin_gpio_assignment, delete_module_pin_gpio_assignment,
     list_alert_templates, create_alert_template, delete_alert_template,
     add_alert_template_rule, delete_alert_template_rule,
     list_alert_rules, create_alert_rule, delete_alert_rule,
+    list_battery_profiles, set_gateway_battery_profile, set_sensor_battery_profile,
 )
+
+NOT_BATTERY_POWERED = "Not powered by batteries"
+
+
+def _battery_profile_options(battery_profiles):
+    """Returns (id_by_label, ordered_labels) with NOT_BATTERY_POWERED always first."""
+    by_label = {NOT_BATTERY_POWERED: None}
+    for p in battery_profiles:
+        by_label[f"{p['name']} ({p['nominal_voltage_mv'] / 1000:.1f}V nominal)"] = p["battery_profile_id"]
+    return by_label, list(by_label.keys())
+
+
+def _label_for_battery_profile(battery_profiles, battery_profile_id):
+    if battery_profile_id is None:
+        return NOT_BATTERY_POWERED
+    for p in battery_profiles:
+        if p["battery_profile_id"] == battery_profile_id:
+            return f"{p['name']} ({p['nominal_voltage_mv'] / 1000:.1f}V nominal)"
+    return f"Unknown profile #{battery_profile_id}"
+
+
+def _battery_control(device_id: str, is_gateway: bool, current_battery_profile_id, battery_profiles, disabled: bool):
+    """Battery-type control per device row, same toggle-to-expand pattern as Factory Reset
+    and Alert Rules — shows the current profile and lets it be changed or cleared."""
+    key_prefix = f"battery_{device_id}"
+    if st.button("Battery", key=f"{key_prefix}_open", disabled=disabled):
+        st.session_state[f"{key_prefix}_show"] = not st.session_state.get(f"{key_prefix}_show", False)
+    if not st.session_state.get(f"{key_prefix}_show"):
+        return
+
+    by_label, labels = _battery_profile_options(battery_profiles)
+    current_label = _label_for_battery_profile(battery_profiles, current_battery_profile_id)
+    st.caption(f"Current: {current_label}")
+    with st.form(f"{key_prefix}_form", border=False):
+        chosen_label = st.selectbox(
+            "Battery type", labels,
+            index=labels.index(current_label) if current_label in labels else 0,
+            key=f"{key_prefix}_select",
+        )
+        save = st.form_submit_button("Save", disabled=disabled)
+    if save:
+        token = get_active_token()
+        try:
+            if is_gateway:
+                set_gateway_battery_profile(token, device_id, by_label[chosen_label])
+            else:
+                set_sensor_battery_profile(token, device_id, by_label[chosen_label])
+            st.success("Battery type updated.")
+            st.rerun()
+        except ApiError as e:
+            st.error(f"Could not update battery type: {e.detail}")
 
 METRIC_OPTIONS = ["temperature", "humidity", "battery", "motion"]
 
@@ -86,6 +141,121 @@ def _alert_rules_control(serial_number: str, disabled: bool):
                     st.rerun()
                 except ApiError as e:
                     st.error(f"Could not save rule: {e.detail}")
+
+
+def _module_pins_control(node_template: dict, disabled: bool):
+    """Node Template -> Sensor Module -> GPIO pin nested editor, shown inline below a
+    template row when toggled open. Three levels: pick which sensor module types this
+    template uses (module pins), then for each one assign its GPIO pin(s) (pin_role ->
+    gpio_pin) against the template's own mcu_variant's GPIO catalog."""
+    node_template_id = node_template["node_template_id"]
+    key_prefix = f"module_pins_{node_template_id}"
+    if st.button("Sensor Modules", key=f"{key_prefix}_open", disabled=disabled):
+        st.session_state[f"{key_prefix}_show"] = not st.session_state.get(f"{key_prefix}_show", False)
+    if not st.session_state.get(f"{key_prefix}_show"):
+        return
+
+    token = get_active_token()
+    try:
+        module_types = list_sensor_module_types(token).get("module_types", [])
+    except ApiError as e:
+        module_types = []
+        st.error(f"Could not load sensor module types: {e.detail}")
+    module_type_by_id = {m["module_type_id"]: m for m in module_types}
+
+    try:
+        gpio_catalog = list_gpio_pins(token, node_template["mcu_variant_id"]).get("gpio_pins", [])
+    except ApiError as e:
+        gpio_catalog = []
+        st.error(f"Could not load GPIO pin catalog: {e.detail}")
+    # Reserved/restricted pins are still shown for context but flagged — the backend
+    # rejects assigning them, this just saves a round trip for the obvious case.
+    gpio_pin_labels = [f"{p['gpio_pin']}" + ("" if p["status"] == "available" else f" ({p['status']})") for p in gpio_catalog]
+    gpio_pin_by_label = {label: p["gpio_pin"] for label, p in zip(gpio_pin_labels, gpio_catalog)}
+
+    try:
+        module_pins = list_node_template_module_pins(token, node_template_id).get("module_pins", [])
+    except ApiError as e:
+        module_pins = []
+        st.error(f"Could not load assigned modules: {e.detail}")
+
+    if not module_pins:
+        st.caption("No sensor modules assigned to this template yet.")
+    for mp in module_pins:
+        mp_id = mp["node_template_module_pin_id"]
+        mtype = module_type_by_id.get(mp["module_type_id"])
+        mtype_name = mtype["name"] if mtype else f"module_type_id {mp['module_type_id']}"
+        mc1, mc2, mc3 = st.columns([3, 3, 1])
+        with mc1:
+            st.write(f"**{mtype_name}**")
+        with mc2:
+            st.caption(f"I2C override: {mp['i2c_address_override'] or 'default'}")
+        with mc3:
+            if st.button("Remove", key=f"{key_prefix}_rm_{mp_id}", disabled=disabled):
+                try:
+                    delete_node_template_module_pin(token, node_template_id, mp_id)
+                    st.rerun()
+                except ApiError as e:
+                    st.error(f"Could not remove module: {e.detail}")
+
+        try:
+            gpio_assignments = list_module_pin_gpio_assignments(token, mp_id).get("gpio_assignments", [])
+        except ApiError as e:
+            gpio_assignments = []
+            st.error(f"Could not load GPIO assignments: {e.detail}")
+
+        for ga in gpio_assignments:
+            gc1, gc2, gc3 = st.columns([2, 2, 1])
+            with gc1:
+                st.caption(f"Role: {ga['pin_role']}")
+            with gc2:
+                st.caption(f"Pin: {ga['gpio_pin']}")
+            with gc3:
+                if st.button("✕", key=f"{key_prefix}_{mp_id}_rmga_{ga['node_template_module_gpio_pin_id']}", disabled=disabled):
+                    try:
+                        delete_module_pin_gpio_assignment(token, mp_id, ga["node_template_module_gpio_pin_id"])
+                        st.rerun()
+                    except ApiError as e:
+                        st.error(f"Could not remove GPIO assignment: {e.detail}")
+
+        with st.expander(f"Assign a GPIO pin to {mtype_name}"):
+            if not gpio_pin_labels:
+                st.caption("No GPIO pins recorded for this template's MCU variant yet.")
+            else:
+                pin_role = st.text_input("Pin role (e.g. data, clock, power)", key=f"{key_prefix}_{mp_id}_role")
+                pin_label = st.selectbox("GPIO pin", gpio_pin_labels, key=f"{key_prefix}_{mp_id}_pin")
+                if st.button("Assign Pin", key=f"{key_prefix}_{mp_id}_assign", disabled=disabled):
+                    if not pin_role.strip():
+                        st.error("Pin role is required.")
+                    else:
+                        try:
+                            add_module_pin_gpio_assignment(
+                                token, mp_id, pin_role=pin_role.strip(), gpio_pin=gpio_pin_by_label[pin_label],
+                            )
+                            st.success("GPIO pin assigned.")
+                            st.rerun()
+                        except ApiError as e:
+                            st.error(f"Could not assign pin: {e.detail}")
+        st.markdown("---")
+
+    with st.expander("Add a sensor module to this template"):
+        if not module_types:
+            st.caption("No sensor module types exist yet — a WatchDog platform admin needs to add one first.")
+        else:
+            mtype_labels = {m["name"]: m for m in module_types}
+            chosen_label = st.selectbox("Sensor module type", list(mtype_labels.keys()), key=f"{key_prefix}_add_type")
+            i2c_override = st.text_input("I2C address override (optional)", key=f"{key_prefix}_add_i2c")
+            if st.button("Add Module", key=f"{key_prefix}_add_submit", disabled=disabled):
+                try:
+                    add_node_template_module_pin(
+                        token, node_template_id,
+                        module_type_id=mtype_labels[chosen_label]["module_type_id"],
+                        i2c_address_override=i2c_override or None,
+                    )
+                    st.success(f"{chosen_label} added.")
+                    st.rerun()
+                except ApiError as e:
+                    st.error(f"Could not add module: {e.detail}")
 
 
 def _factory_reset_control(serial_number: str, disabled: bool):
@@ -248,6 +418,12 @@ with tab_devices:
     filter_label = st.selectbox("Filter by site", ["All sites"] + site_labels, key="device_site_filter")
     filter_site_id = None if filter_label == "All sites" else site_by_label[filter_label]["site_id"]
 
+    try:
+        battery_profiles = list_battery_profiles(token).get("battery_profiles", [])
+    except ApiError as e:
+        battery_profiles = []
+        st.error(f"Could not load battery profiles: {e.detail}")
+
     st.markdown("### Gateways")
     try:
         gateways = list_gateways(token, site_id=filter_site_id).get("gateways", [])
@@ -257,7 +433,7 @@ with tab_devices:
 
     if gateways:
         for gw in gateways:
-            c1, c2, c3, c4, c5, c6 = st.columns([3, 2, 2, 1, 1, 1])
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([3, 2, 2, 1, 1, 1, 1])
             with c1:
                 st.write(f"**{gw['name'] or gw['gateway_id']}**")
                 st.caption(f"ID: {gw['gateway_id']}")
@@ -276,6 +452,8 @@ with tab_devices:
                 _factory_reset_control(gw["serial_number"], in_support_view)
             with c6:
                 _alert_rules_control(gw["serial_number"], in_support_view)
+            with c7:
+                _battery_control(gw["gateway_id"], True, gw.get("battery_profile_id"), battery_profiles, in_support_view)
     else:
         st.info("No gateways found for this filter.")
 
@@ -289,7 +467,7 @@ with tab_devices:
 
     if sensors:
         for sn in sensors:
-            c1, c2, c3, c4, c5, c6 = st.columns([3, 2, 2, 1, 1, 1])
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([3, 2, 2, 1, 1, 1, 1])
             with c1:
                 st.write(f"**{sn['name'] or sn['sensor_id']}**")
                 st.caption(f"ID: {sn['sensor_id']} — Gateway: {sn['gateway_id']}")
@@ -308,6 +486,8 @@ with tab_devices:
                 _factory_reset_control(sn["serial_number"], in_support_view)
             with c6:
                 _alert_rules_control(sn["serial_number"], in_support_view)
+            with c7:
+                _battery_control(sn["sensor_id"], False, sn.get("battery_profile_id"), battery_profiles, in_support_view)
     else:
         st.info("No sensors found for this filter.")
 
@@ -406,20 +586,29 @@ with tab_templates:
         templates = []
         st.error(f"Could not load node templates: {e.detail}")
 
+    try:
+        template_battery_profiles = list_battery_profiles(token).get("battery_profiles", [])
+    except ApiError:
+        template_battery_profiles = []
+
     if templates:
         for t in templates:
-            c1, c2, c3 = st.columns([3, 2, 1])
+            c1, c2, c3, c4, c5 = st.columns([3, 2, 2, 1, 1])
             with c1:
                 st.write(f"**{t['name']}**")
             with c2:
                 st.write(t["device_type"])
             with c3:
+                st.caption(_label_for_battery_profile(template_battery_profiles, t.get("battery_profile_id")))
+            with c4:
                 if st.button("Delete", key=f"del_nt_{t['node_template_id']}", disabled=in_support_view):
                     try:
                         delete_node_template(token, t["node_template_id"])
                         st.rerun()
                     except ApiError as e:
                         st.error(f"Could not delete: {e.detail}")
+            with c5:
+                _module_pins_control(t, in_support_view)
     else:
         st.info("No node templates yet.")
 
@@ -444,6 +633,11 @@ with tab_templates:
                 mcu_label = st.selectbox("MCU variant*", list(mcu_by_label.keys()))
                 alert_by_label = {a["name"]: a for a in alert_templates}
                 alert_label = st.selectbox("Alert template (optional)", ["None"] + list(alert_by_label.keys()))
+                battery_by_label, battery_labels = _battery_profile_options(template_battery_profiles)
+                battery_label = st.selectbox(
+                    "Default battery type (optional — devices provisioned from this template start with this, can be changed per-device)",
+                    battery_labels,
+                )
                 cloud_url = st.text_input("Cloud service URL (gateway only)") if device_type == "gateway" else None
                 submitted = st.form_submit_button("Create Template", type="primary", disabled=in_support_view)
 
@@ -457,6 +651,7 @@ with tab_templates:
                             mcu_variant_id=mcu_by_label[mcu_label]["mcu_variant_id"],
                             cloud_service_url=(cloud_url or None) if device_type == "gateway" else None,
                             alert_template_id=None if alert_label == "None" else alert_by_label[alert_label]["alert_template_id"],
+                            battery_profile_id=battery_by_label[battery_label],
                         )
                         st.success(f"Template '{name}' created.")
                         st.rerun()

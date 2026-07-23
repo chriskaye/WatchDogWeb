@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import psycopg2
+from psycopg2.extras import Json
 from datetime import datetime, timedelta
 import uuid
 import os
@@ -408,14 +409,23 @@ def authorize_admin_action_on_user(cur, actor: User, target_user_id: int, target
 def log_event(cur, org_id: int, event_type: str, actor_user_id: int | None,
                target_type: str, target_id: str | None, details: dict | None):
     """Writes to the per-org event log table. Table name is built from an int org_id we
-    already trust (never from request input), so this isn't a SQL-injection vector.
-    NOTE (Phase G): only a handful of event_type call sites are wired up below
-    (invites, lock/suspend, GDPR deletes). The full event_type/details matrix described in
-    the outstanding-tasks doc is still a design item, not something I've silently finished."""
+    already trust (never from request input), so this isn't a SQL-injection vector."""
     tbl = f"org_event_log_org_{int(org_id)}"
     cur.execute(
         f"INSERT INTO {tbl} (event_type, actor_user_id, target_type, target_id, details) "
         f"VALUES (%s, %s, %s, %s, %s::jsonb);",
+        (event_type, actor_user_id, target_type, target_id,
+         json.dumps(details) if details is not None else None),
+    )
+
+def log_platform_event(cur, event_type: str, actor_user_id: int | None,
+                        target_type: str, target_id: str | None, details: dict | None):
+    """Writes to platform_event_log — for is_watchdog_admin catalog actions that have no
+    org_id (mcu_variants, battery_profiles, device_registry, sensor_module_types,
+    module_mcu_compatibility). Separate from log_event()'s per-org tables."""
+    cur.execute(
+        "INSERT INTO platform_event_log (event_type, actor_user_id, target_type, target_id, details) "
+        "VALUES (%s, %s, %s, %s, %s::jsonb);",
         (event_type, actor_user_id, target_type, target_id,
          json.dumps(details) if details is not None else None),
     )
@@ -561,6 +571,7 @@ def create_org_and_owner(email: str, password_hash: str | None, provider: str | 
 
     token = create_verification_token(cur, user_id, "signup")
 
+    log_event(cur, org_id, "org_registered", user_id, "organisation", str(org_id), {"email": email})
     conn.commit()
     cur.close()
     conn.close()
@@ -599,6 +610,8 @@ def create_unverified_user_in_org(email: str, org_id: int, role: str, site_id: i
 
     token = create_verification_token(cur, user_id, "signup")
 
+    log_event(cur, org_id, "user_invited", granted_by, "user", str(user_id),
+              {"email": email, "role": role, "site_id": site_id})
     conn.commit()
     cur.close()
     conn.close()
@@ -625,28 +638,48 @@ def register_user(data: UserCreate):
     user_id = create_org_and_owner(data.email, hashed, None, None)
     return {"user_id": user_id, "email": data.email}
 
+def _log_login_attempt(org_id: int, user_id: int, event_type: str, ip: str | None, reason: str | None = None):
+    """Best-effort login event logging on its own short-lived connection — /token doesn't
+    otherwise touch the DB directly (get_user_by_email opens/closes its own connection)."""
+    details = {"ip": ip}
+    if reason:
+        details["reason"] = reason
+    conn = get_db()
+    cur = conn.cursor()
+    log_event(cur, org_id, event_type, user_id, "user", str(user_id), details)
+    conn.commit()
+    cur.close()
+    conn.close()
+
 @app.post("/token", response_model=Token) # JWT login
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends()):
+    client_ip = request.client.host if request.client else None
     result = get_user_by_email(form_data.username)
     if not result:
+        # No resolvable user -> no org to log the attempt against.
         raise HTTPException(status_code=400, detail="Incorrect email or password")
     user, password_hash, is_locked, is_suspended, suspend_reason = result
 
     if not password_hash or not verify_password(form_data.password, password_hash):
+        _log_login_attempt(user.org_id, user.user_id, "login_failed", client_ip, "invalid_credentials")
         raise HTTPException(status_code=400, detail="Incorrect email or password")
 
     if not user.is_verified:
+        _log_login_attempt(user.org_id, user.user_id, "login_failed", client_ip, "not_verified")
         raise HTTPException(status_code=403, detail="Email not verified")
 
     if is_locked:
+        _log_login_attempt(user.org_id, user.user_id, "login_failed", client_ip, "locked")
         raise HTTPException(status_code=403, detail="Account is locked. Use the account recovery flow to regain access.")
 
     if is_suspended:
+        _log_login_attempt(user.org_id, user.user_id, "login_failed", client_ip, "suspended")
         detail = "Account is suspended."
         if suspend_reason:
             detail += f" Reason: {suspend_reason}"
         raise HTTPException(status_code=403, detail=detail)
 
+    _log_login_attempt(user.org_id, user.user_id, "login_success", client_ip)
     access_token = create_access_token(data={"sub": str(user.user_id)})
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -715,12 +748,13 @@ def request_initial_password_setup(email: str):
     to avoid leaking account existence/state via response differences."""
     conn = get_db(); cur = conn.cursor()
     cur.execute(
-        "SELECT user_id FROM users WHERE email = %s AND is_verified = TRUE AND password_hash IS NULL;",
+        "SELECT user_id, org_id FROM users WHERE email = %s AND is_verified = TRUE AND password_hash IS NULL;",
         (email,),
     )
     row = cur.fetchone()
     if row:
         token = create_verification_token(cur, row[0], "password_reset")
+        log_event(cur, row[1], "password_reset_requested", None, "user", str(row[0]), None)
         conn.commit()
         setup_url = FRONTEND_BASE_URL + f"/set-password?token={token}"
         send_templated_email(
@@ -758,13 +792,15 @@ def set_password_from_token(data: SetPasswordFromToken):
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
     new_hash = get_password_hash(data.new_password)
-    cur.execute("UPDATE users SET password_hash = %s WHERE user_id = %s;", (new_hash, user_id))
+    cur.execute("UPDATE users SET password_hash = %s WHERE user_id = %s RETURNING org_id;", (new_hash, user_id))
+    set_org_id = cur.fetchone()[0]
     cur.execute(
         "INSERT INTO user_auth_methods (user_id, method_type) VALUES (%s, 'password') "
         "ON CONFLICT (user_id, method_type) DO NOTHING;",
         (user_id,),
     )
     cur.execute("UPDATE user_verification_tokens SET used_at = NOW() WHERE token_id = %s;", (token_id,))
+    log_event(cur, set_org_id, "password_reset_completed", None, "user", str(user_id), None)
     conn.commit()
     cur.close(); conn.close()
     return {"status": "password_set"}
@@ -794,6 +830,7 @@ def change_own_password(data: ChangePassword, current_user: User = Depends(get_c
         "UPDATE users SET password_hash = %s, sessions_invalidated_at = NOW() WHERE user_id = %s;",
         (new_hash, current_user.user_id),
     )
+    log_event(cur, current_user.org_id, "password_changed", current_user.user_id, "user", str(current_user.user_id), None)
     conn.commit(); cur.close(); conn.close()
     return {"status": "password_changed"}
 
@@ -1144,6 +1181,8 @@ def unlink_method(data: UnlinkMethod, current_user: User = Depends(get_current_u
             (current_user.user_id, method_type),
         )
 
+    log_event(cur, current_user.org_id, "sso_unlinked", current_user.user_id, "user", str(current_user.user_id),
+              {"method_type": method_type})
     conn.commit()
     cur.close()
     conn.close()
@@ -1163,6 +1202,11 @@ def create_crypto_profile(data: CryptoProfileCreate):
         (data.user_id, data.name, data.mode, data.key_id),
     )
     crypto_id = cur.fetchone()[0]
+    cur.execute("SELECT org_id FROM users WHERE user_id = %s;", (data.user_id,))
+    owner_row = cur.fetchone()
+    if owner_row:
+        log_event(cur, owner_row[0], "crypto_profile_created", None, "crypto_profile", str(crypto_id),
+                  {"name": data.name, "mode": data.mode})
     conn.commit()
     cur.close()
     conn.close()
@@ -1189,6 +1233,8 @@ def register_gateway(data: GatewayRegistration, current_user: User = Depends(get
         (data.gateway_id, current_user.user_id, current_user.org_id, data.site_id,
          data.name, data.firmware_version, data.crypto_id),
     )
+    log_event(cur, current_user.org_id, "gateway_registered", current_user.user_id, "gateway", data.gateway_id,
+              {"name": data.name, "site_id": data.site_id})
     conn.commit()
     cur.close()
     conn.close()
@@ -1263,6 +1309,8 @@ def register_sensor(data: SensorRegistration, current_user: User = Depends(get_c
             (data.sensor_id, cap.capability_type, cap.unit),
         )
 
+    log_event(cur, current_user.org_id, "sensor_registered", current_user.user_id, "sensor", data.sensor_id,
+              {"name": data.name, "gateway_id": data.gateway_id})
     conn.commit()
     cur.close()
     conn.close()
@@ -1287,7 +1335,7 @@ def list_gateways(site_id: int | None = None, current_user: User = Depends(get_c
     site_ids = _accessible_site_ids_or_none(cur, current_user, site_id)
     if site_ids is None:
         cur.execute(
-            "SELECT gateway_id, name, site_id, firmware_version, serial_number, is_active FROM gateways WHERE org_id = %s ORDER BY name;",
+            "SELECT gateway_id, name, site_id, firmware_version, serial_number, is_active, battery_profile_id FROM gateways WHERE org_id = %s ORDER BY name;",
             (current_user.org_id,),
         )
     elif not site_ids:
@@ -1295,13 +1343,14 @@ def list_gateways(site_id: int | None = None, current_user: User = Depends(get_c
         return {"gateways": []}
     else:
         cur.execute(
-            "SELECT gateway_id, name, site_id, firmware_version, serial_number, is_active FROM gateways WHERE org_id = %s AND site_id = ANY(%s) ORDER BY name;",
+            "SELECT gateway_id, name, site_id, firmware_version, serial_number, is_active, battery_profile_id FROM gateways WHERE org_id = %s AND site_id = ANY(%s) ORDER BY name;",
             (current_user.org_id, site_ids),
         )
     rows = cur.fetchall()
     cur.close(); conn.close()
     return {"gateways": [
-        {"gateway_id": r[0], "name": r[1], "site_id": r[2], "firmware_version": r[3], "serial_number": r[4], "is_active": r[5]}
+        {"gateway_id": r[0], "name": r[1], "site_id": r[2], "firmware_version": r[3], "serial_number": r[4],
+         "is_active": r[5], "battery_profile_id": r[6]}
         for r in rows
     ]}
 
@@ -1309,7 +1358,7 @@ def list_gateways(site_id: int | None = None, current_user: User = Depends(get_c
 def list_sensors(site_id: int | None = None, gateway_id: str | None = None, current_user: User = Depends(get_current_user)):
     conn = get_db(); cur = conn.cursor()
     site_ids = _accessible_site_ids_or_none(cur, current_user, site_id)
-    base_query = "SELECT sensor_id, name, gateway_id, site_id, location, firmware_version, serial_number, is_active FROM sensors WHERE org_id = %s"
+    base_query = "SELECT sensor_id, name, gateway_id, site_id, location, firmware_version, serial_number, is_active, battery_profile_id FROM sensors WHERE org_id = %s"
     params = [current_user.org_id]
     if site_ids is not None:
         if not site_ids:
@@ -1326,7 +1375,7 @@ def list_sensors(site_id: int | None = None, gateway_id: str | None = None, curr
     cur.close(); conn.close()
     return {"sensors": [
         {"sensor_id": r[0], "name": r[1], "gateway_id": r[2], "site_id": r[3], "location": r[4],
-         "firmware_version": r[5], "serial_number": r[6], "is_active": r[7]}
+         "firmware_version": r[5], "serial_number": r[6], "is_active": r[7], "battery_profile_id": r[8]}
         for r in rows
     ]}
 
@@ -1335,9 +1384,12 @@ def soft_delete_gateway(data: SoftDeleteGateway):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "UPDATE gateways SET is_active = FALSE WHERE gateway_id = %s;",
+        "UPDATE gateways SET is_active = FALSE WHERE gateway_id = %s RETURNING org_id;",
         (data.gateway_id,),
     )
+    row = cur.fetchone()
+    if row and row[0] is not None:
+        log_event(cur, row[0], "gateway_soft_deleted", None, "gateway", data.gateway_id, None)
     conn.commit()
     cur.close()
     conn.close()
@@ -1349,9 +1401,12 @@ def soft_delete_sensor(data: SoftDeleteSensor):
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "UPDATE sensors SET is_active = FALSE WHERE sensor_id = %s;",
+        "UPDATE sensors SET is_active = FALSE WHERE sensor_id = %s RETURNING org_id;",
         (data.sensor_id,),
     )
+    row = cur.fetchone()
+    if row and row[0] is not None:
+        log_event(cur, row[0], "sensor_soft_deleted", None, "sensor", data.sensor_id, None)
     conn.commit()
     cur.close()
     conn.close()
@@ -1362,7 +1417,11 @@ def soft_delete_sensor(data: SoftDeleteSensor):
 def hard_delete_gateway_endpoint(data: HardDeleteGateway):
     conn = get_db()
     cur = conn.cursor()
+    cur.execute("SELECT org_id FROM gateways WHERE gateway_id = %s;", (data.gateway_id,))
+    org_row = cur.fetchone()
     cur.execute("SELECT hard_delete_gateway(%s);", (data.gateway_id,))
+    if org_row and org_row[0] is not None:
+        log_event(cur, org_row[0], "gateway_hard_deleted", None, "gateway", data.gateway_id, None)
     conn.commit()
     cur.close()
     conn.close()
@@ -1521,6 +1580,8 @@ def create_ota_job(data: OtaJobCreate, current_user: User = Depends(get_current_
             (data.firmware_version, data.target_id),
         )
 
+    log_event(cur, current_user.org_id, "ota_job_created", current_user.user_id, data.target_type, data.target_id,
+              {"ota_id": ota_id, "firmware_version": data.firmware_version})
     conn.commit()
     cur.close()
     conn.close()
@@ -1617,6 +1678,16 @@ def update_ota_job(data: OtaJobUpdate):
 
     target_type, target_id, firmware_version, job_type = row
 
+    # Resolved before any status-specific update below, since the factory_reset success
+    # path (further down) clears the device's org_id link as part of the wipe — looking
+    # this up afterwards would find nothing to log against.
+    if target_type == "gateway":
+        cur.execute("SELECT org_id FROM gateways WHERE gateway_id = %s;", (target_id,))
+    else:
+        cur.execute("SELECT org_id FROM sensors WHERE sensor_id = %s;", (target_id,))
+    ota_org_row = cur.fetchone()
+    ota_org_id = ota_org_row[0] if ota_org_row else None
+
     # Update target firmware + ota_status
     if data.status == "success":
         if job_type == "firmware_update":
@@ -1678,6 +1749,10 @@ def update_ota_job(data: OtaJobUpdate):
                 "UPDATE sensors SET ota_status = 'in_progress' WHERE sensor_id = %s;",
                 (target_id,),
             )
+
+    if ota_org_id is not None:
+        log_event(cur, ota_org_id, "ota_job_updated", None, target_type, target_id,
+                  {"ota_id": data.ota_id, "status": data.status, "job_type": job_type})
 
     conn.commit()
     cur.close()
@@ -1773,17 +1848,24 @@ def activate_device(data: ProvisionDevice, current_user: User = Depends(get_curr
         (data.serial_number,),
     )
 
-    # Optional: seed alert_rules for this device from a node_template's linked alert_template
+    # Optional: seed alert_rules + default battery_profile_id for this device from its node_template
     if data.node_template_id is not None:
         cur.execute(
-            "SELECT alert_template_id FROM node_templates WHERE node_template_id = %s AND org_id = %s;",
+            "SELECT alert_template_id, battery_profile_id FROM node_templates WHERE node_template_id = %s AND org_id = %s;",
             (data.node_template_id, current_user.org_id),
         )
         nt_row = cur.fetchone()
         if not nt_row:
             cur.close(); conn.close()
             raise HTTPException(status_code=404, detail="Node template not found")
-        alert_template_id = nt_row[0]
+        alert_template_id, template_battery_profile_id = nt_row
+        if template_battery_profile_id is not None:
+            table = "gateways" if device_type == "gateway" else "sensors"
+            id_col = "gateway_id" if device_type == "gateway" else "sensor_id"
+            cur.execute(
+                f"UPDATE {table} SET battery_profile_id = %s WHERE {id_col} = %s;",
+                (template_battery_profile_id, device_id),
+            )
         if alert_template_id is not None:
             cur.execute(
                 "SELECT metric_name, threshold_min, threshold_max, trigger_value FROM alert_template_rules WHERE alert_template_id = %s;",
@@ -1953,6 +2035,30 @@ from jobs import (
     run_weekly_fallback_backup, run_gdpr_deletion_sweep,
 )
 
+# =====================================================================================
+# Scheduler manual override (API-6)
+# =====================================================================================
+# The `scheduler` service is a separate long-running process (api/scheduler.py, its own
+# container) -- this endpoint doesn't talk to it over IPC. It imports the same module
+# (same image, same api/ directory) and calls the job function directly against the DB,
+# independent of whatever the actual BlockingScheduler process is doing. Good enough for
+# "ops needs to force a job to run right now" without building a job queue.
+
+class SchedulerRunRequest(BaseModel):
+    job_id: str  # one of scheduler.JOBS' keys, e.g. 'daily_backup', 'gdpr_sweep'
+
+@app.post("/scheduler/run")
+def run_scheduler_job_now(data: SchedulerRunRequest, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.close(); conn.close()
+    import scheduler as scheduler_module
+    try:
+        scheduler_module.run_job_now(data.job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "job_run_triggered", "job_id": data.job_id}
+
 class BackupCreate(BaseModel):
     name: str
     description: str | None = None
@@ -1974,6 +2080,7 @@ def create_backup(data: BackupCreate, current_user: User = Depends(get_current_u
     try:
         snapshot_org_data(cur, current_user.org_id, backup_id)
         cur.execute("UPDATE backups SET status = 'completed', completed_at = NOW() WHERE backup_id = %s;", (backup_id,))
+        log_event(cur, current_user.org_id, "backup_created", current_user.user_id, "backup", str(backup_id), {"name": data.name})
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -2037,6 +2144,35 @@ class BackupSettingsUpdate(BaseModel):
     weekly_retention_count: int | None = None
     monthly_retention_count: int | None = None
 
+@app.get("/backups/settings")
+def get_backup_settings(current_user: User = Depends(get_current_user)):
+    """Outstanding-tasks item #6: POST (set) has existed since the backup system shipped,
+    but nothing read current values back — the Settings -> Backups tab's settings form
+    could only write, never show what's actually configured. Returns defaults (matching
+    the table's own column defaults) if the org has never saved settings yet, rather than
+    a 404 — "not configured yet" isn't an error state."""
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    cur.execute(
+        """
+        SELECT is_enabled, daily_retention_count, weekly_retention_count, monthly_retention_count, updated_at
+        FROM org_backup_settings WHERE org_id = %s;
+        """,
+        (current_user.org_id,),
+    )
+    row = cur.fetchone()
+    cur.close(); conn.close()
+    if not row:
+        return {
+            "is_enabled": False, "daily_retention_count": 7, "weekly_retention_count": 4,
+            "monthly_retention_count": 3, "updated_at": None, "configured": False,
+        }
+    return {
+        "is_enabled": row[0], "daily_retention_count": row[1], "weekly_retention_count": row[2],
+        "monthly_retention_count": row[3], "updated_at": row[4].isoformat() if row[4] else None,
+        "configured": True,
+    }
+
 @app.post("/backups/settings")
 def update_backup_settings(data: BackupSettingsUpdate, current_user: User = Depends(get_current_user)):
     conn = get_db()
@@ -2066,6 +2202,9 @@ def update_backup_settings(data: BackupSettingsUpdate, current_user: User = Depe
             (current_user.org_id, data.is_enabled, data.daily_retention_count,
              data.weekly_retention_count, data.monthly_retention_count, current_user.user_id),
         )
+    log_event(cur, current_user.org_id, "backup_settings_updated", current_user.user_id, "organisation", str(current_user.org_id),
+              {"is_enabled": data.is_enabled, "daily_retention_count": data.daily_retention_count,
+               "weekly_retention_count": data.weekly_retention_count, "monthly_retention_count": data.monthly_retention_count})
     conn.commit()
     cur.close(); conn.close()
     return {"status": "backup_settings_updated"}
@@ -2186,6 +2325,7 @@ def request_self_delete(current_user: User = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="You are the last Global Admin — request organisation deletion instead")
 
     token = create_verification_token(cur, current_user.user_id, "account_deletion")
+    log_event(cur, current_user.org_id, "self_delete_requested", current_user.user_id, "user", str(current_user.user_id), None)
     conn.commit(); cur.close(); conn.close()
 
     confirm_url = FRONTEND_BASE_URL + f"/confirm-delete?token={token}"
@@ -2213,7 +2353,11 @@ def confirm_self_delete(token: str):
         raise HTTPException(status_code=400, detail="Token expired or already used")
 
     cur.execute("UPDATE user_verification_tokens SET used_at = NOW() WHERE token_id = %s;", (token_id,))
+    cur.execute("SELECT org_id FROM users WHERE user_id = %s;", (user_id,))
+    self_delete_org_row = cur.fetchone()
     cur.execute("SELECT hard_delete_user(%s);", (user_id,))
+    if self_delete_org_row:
+        log_event(cur, self_delete_org_row[0], "user_self_deleted", None, "user", str(user_id), None)
     conn.commit()
     cur.close(); conn.close()
     return {"status": "account_deleted"}
@@ -2281,10 +2425,11 @@ def request_unlock(email: str):
     """Always returns success regardless of whether the email exists/is locked, to avoid
     leaking account existence."""
     conn = get_db(); cur = conn.cursor()
-    cur.execute("SELECT user_id FROM users WHERE email = %s AND is_locked = TRUE;", (email,))
+    cur.execute("SELECT user_id, org_id FROM users WHERE email = %s AND is_locked = TRUE;", (email,))
     row = cur.fetchone()
     if row:
         token = create_verification_token(cur, row[0], "account_unlock")
+        log_event(cur, row[1], "user_unlock_requested", None, "user", str(row[0]), None)
         conn.commit()
         unlock_url = FRONTEND_BASE_URL + f"/unlock?token={token}"
         send_templated_email(
@@ -2320,15 +2465,17 @@ def confirm_unlock(data: UnlockConfirm):
 
     new_hash = get_password_hash(data.new_password)
     cur.execute(
-        "UPDATE users SET password_hash = %s, is_locked = FALSE, locked_at = NULL, locked_by = NULL WHERE user_id = %s;",
+        "UPDATE users SET password_hash = %s, is_locked = FALSE, locked_at = NULL, locked_by = NULL WHERE user_id = %s RETURNING org_id;",
         (new_hash, user_id),
     )
+    unlock_org_id = cur.fetchone()[0]
     cur.execute(
         "INSERT INTO user_auth_methods (user_id, method_type) VALUES (%s, 'password') "
         "ON CONFLICT (user_id, method_type) DO NOTHING;",
         (user_id,),
     )
     cur.execute("UPDATE user_verification_tokens SET used_at = NOW() WHERE token_id = %s;", (token_id,))
+    log_event(cur, unlock_org_id, "user_unlock_confirmed", None, "user", str(user_id), None)
     conn.commit()
     cur.close(); conn.close()
     return {"status": "unlocked"}
@@ -2496,6 +2643,7 @@ class NodeTemplateCreate(BaseModel):
     mesh_crypto_id: int | None = None
     packet_crypto_id: int | None = None
     alert_template_id: int | None = None
+    battery_profile_id: int | None = None  # default battery type this template's devices are provisioned with
 
 def validate_node_template(data: NodeTemplateCreate):
     if data.device_type not in ("gateway", "sensor"):
@@ -2516,16 +2664,18 @@ def create_node_template(data: NodeTemplateCreate, current_user: User = Depends(
         """
         INSERT INTO node_templates (org_id, name, device_type, mcu_variant_id, cloud_service_url,
             comms_interfaces, sleep_time_seconds, polling_interval_seconds,
-            wlan_crypto_id, mesh_crypto_id, packet_crypto_id, alert_template_id, created_by)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            wlan_crypto_id, mesh_crypto_id, packet_crypto_id, alert_template_id, battery_profile_id, created_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING node_template_id;
         """,
         (current_user.org_id, data.name, data.device_type, data.mcu_variant_id, data.cloud_service_url,
          data.comms_interfaces, data.sleep_time_seconds, data.polling_interval_seconds,
          data.wlan_crypto_id, data.mesh_crypto_id, data.packet_crypto_id, data.alert_template_id,
-         current_user.user_id),
+         data.battery_profile_id, current_user.user_id),
     )
     node_template_id = cur.fetchone()[0]
+    log_event(cur, current_user.org_id, "node_template_created", current_user.user_id, "node_template",
+              str(node_template_id), {"name": data.name, "device_type": data.device_type})
     conn.commit(); cur.close(); conn.close()
     return {"status": "node_template_created", "node_template_id": node_template_id}
 
@@ -2533,13 +2683,14 @@ def create_node_template(data: NodeTemplateCreate, current_user: User = Depends(
 def list_node_templates(current_user: User = Depends(get_current_user)):
     conn = get_db(); cur = conn.cursor()
     cur.execute(
-        "SELECT node_template_id, name, device_type, mcu_variant_id, alert_template_id FROM node_templates WHERE org_id = %s ORDER BY name;",
+        "SELECT node_template_id, name, device_type, mcu_variant_id, alert_template_id, battery_profile_id FROM node_templates WHERE org_id = %s ORDER BY name;",
         (current_user.org_id,),
     )
     rows = cur.fetchall()
     cur.close(); conn.close()
     return {"node_templates": [
-        {"node_template_id": r[0], "name": r[1], "device_type": r[2], "mcu_variant_id": r[3], "alert_template_id": r[4]}
+        {"node_template_id": r[0], "name": r[1], "device_type": r[2], "mcu_variant_id": r[3],
+         "alert_template_id": r[4], "battery_profile_id": r[5]}
         for r in rows
     ]}
 
@@ -2548,6 +2699,8 @@ def delete_node_template(node_template_id: int, current_user: User = Depends(get
     conn = get_db(); cur = conn.cursor()
     require_org_admin(cur, current_user)
     cur.execute("DELETE FROM node_templates WHERE node_template_id = %s AND org_id = %s;", (node_template_id, current_user.org_id))
+    log_event(cur, current_user.org_id, "node_template_deleted", current_user.user_id, "node_template",
+              str(node_template_id), None)
     conn.commit(); cur.close(); conn.close()
     return {"status": "node_template_deleted", "node_template_id": node_template_id}
 
@@ -2586,6 +2739,8 @@ def add_module_pin_assignment(node_template_id: int, data: ModulePinAssignmentCr
         (node_template_id, data.module_type_id, data.i2c_address_override),
     )
     pin_id = cur.fetchone()[0]
+    log_event(cur, current_user.org_id, "node_template_pin_added", current_user.user_id, "node_template_module_pin",
+              str(pin_id), {"node_template_id": node_template_id, "module_type_id": data.module_type_id})
     conn.commit(); cur.close(); conn.close()
     return {"status": "module_pin_assigned", "node_template_module_pin_id": pin_id}
 
@@ -2622,6 +2777,8 @@ def delete_module_pin_assignment(node_template_id: int, pin_id: int, current_use
         "DELETE FROM node_template_module_pins WHERE node_template_module_pin_id = %s AND node_template_id = %s;",
         (pin_id, node_template_id),
     )
+    log_event(cur, current_user.org_id, "node_template_pin_removed", current_user.user_id, "node_template_module_pin",
+              str(pin_id), {"node_template_id": node_template_id})
     conn.commit(); cur.close(); conn.close()
     return {"status": "module_pin_deleted", "node_template_module_pin_id": pin_id}
 
@@ -2679,6 +2836,8 @@ def add_gpio_assignment(pin_id: int, data: GpioAssignmentCreate, current_user: U
         (pin_id, data.pin_role, data.gpio_pin),
     )
     gpio_assignment_id = cur.fetchone()[0]
+    log_event(cur, org_id, "node_template_gpio_assigned", current_user.user_id, "node_template_module_gpio_pin",
+              str(gpio_assignment_id), {"pin_id": pin_id, "pin_role": data.pin_role, "gpio_pin": data.gpio_pin})
     conn.commit(); cur.close(); conn.close()
     return {"status": "gpio_assigned", "node_template_module_gpio_pin_id": gpio_assignment_id}
 
@@ -2725,6 +2884,8 @@ def delete_gpio_assignment(pin_id: int, gpio_assignment_id: int, current_user: U
         "DELETE FROM node_template_module_gpio_pins WHERE node_template_module_gpio_pin_id = %s AND node_template_module_pin_id = %s;",
         (gpio_assignment_id, pin_id),
     )
+    log_event(cur, current_user.org_id, "node_template_gpio_removed", current_user.user_id, "node_template_module_gpio_pin",
+              str(gpio_assignment_id), {"pin_id": pin_id})
     conn.commit(); cur.close(); conn.close()
     return {"status": "gpio_assignment_deleted", "node_template_module_gpio_pin_id": gpio_assignment_id}
 
@@ -2759,6 +2920,8 @@ def create_alert_template(data: AlertTemplateCreate, current_user: User = Depend
         (current_user.org_id, data.name, current_user.user_id),
     )
     alert_template_id = cur.fetchone()[0]
+    log_event(cur, current_user.org_id, "alert_template_created", current_user.user_id, "alert_template",
+              str(alert_template_id), {"name": data.name})
     conn.commit(); cur.close(); conn.close()
     return {"status": "alert_template_created", "alert_template_id": alert_template_id}
 
@@ -2786,6 +2949,8 @@ def delete_alert_template(alert_template_id: int, current_user: User = Depends(g
     conn = get_db(); cur = conn.cursor()
     require_org_admin(cur, current_user)
     cur.execute("DELETE FROM alert_templates WHERE alert_template_id = %s AND org_id = %s;", (alert_template_id, current_user.org_id))
+    log_event(cur, current_user.org_id, "alert_template_deleted", current_user.user_id, "alert_template",
+              str(alert_template_id), None)
     conn.commit(); cur.close(); conn.close()
     return {"status": "alert_template_deleted", "alert_template_id": alert_template_id}
 
@@ -2809,6 +2974,8 @@ def add_alert_template_rule(alert_template_id: int, data: AlertTemplateRuleCreat
         (alert_template_id, data.metric_name, data.threshold_min, data.threshold_max, data.trigger_value),
     )
     rule_id = cur.fetchone()[0]
+    log_event(cur, current_user.org_id, "alert_template_rule_added", current_user.user_id, "alert_template_rule",
+              str(rule_id), {"alert_template_id": alert_template_id, "metric_name": data.metric_name})
     conn.commit(); cur.close(); conn.close()
     return {"status": "rule_saved", "alert_template_rule_id": rule_id}
 
@@ -2817,6 +2984,8 @@ def delete_alert_template_rule(alert_template_id: int, rule_id: int, current_use
     conn = get_db(); cur = conn.cursor()
     require_org_admin(cur, current_user)
     cur.execute("DELETE FROM alert_template_rules WHERE alert_template_rule_id = %s AND alert_template_id = %s;", (rule_id, alert_template_id))
+    log_event(cur, current_user.org_id, "alert_template_rule_removed", current_user.user_id, "alert_template_rule",
+              str(rule_id), {"alert_template_id": alert_template_id})
     conn.commit(); cur.close(); conn.close()
     return {"status": "rule_deleted", "alert_template_rule_id": rule_id}
 
@@ -2869,6 +3038,8 @@ def create_alert_rule(data: AlertRuleCreate, current_user: User = Depends(get_cu
         (data.serial_number, data.metric_name, data.threshold_min, data.threshold_max, data.trigger_value, current_user.user_id),
     )
     rule_id = cur.fetchone()[0]
+    log_event(cur, device[0], "alert_rule_created", current_user.user_id, "alert_rule", str(rule_id),
+              {"serial_number": data.serial_number, "metric_name": data.metric_name})
     conn.commit(); cur.close(); conn.close()
     return {"status": "alert_rule_saved", "alert_rule_id": rule_id}
 
@@ -2904,6 +3075,8 @@ def delete_alert_rule(alert_rule_id: int, current_user: User = Depends(get_curre
         raise HTTPException(status_code=404, detail="Device not found")
     require_device_admin(cur, current_user, device[0], device[1])
     cur.execute("UPDATE alert_rules SET is_active = FALSE WHERE alert_rule_id = %s;", (alert_rule_id,))
+    log_event(cur, device[0], "alert_rule_deleted", current_user.user_id, "alert_rule", str(alert_rule_id),
+              {"serial_number": row[0]})
     conn.commit(); cur.close(); conn.close()
     return {"status": "alert_rule_deleted", "alert_rule_id": alert_rule_id}
 
@@ -2950,6 +3123,254 @@ def list_alerts(serial_number: str | None = None, status: str | None = None, cur
     ]}
 
 # =====================================================================================
+# Battery profile catalog (battery_profiles, battery_discharge_points) — FE-8
+# =====================================================================================
+# Same shape as the MCU catalog just below: global/factory reference data, no org_id,
+# platform-admin gated to create, open reads (needed to populate Node Template and
+# per-device battery selectors). battery_profile_id is nullable on node_templates/
+# gateways/sensors — NULL means "not powered by batteries" or "not set yet", not an error.
+
+class BatteryProfileCreate(BaseModel):
+    name: str
+    chemistry: str  # 'li-ion' | 'lipo' | 'nimh' | 'alkaline' | 'cr2032'
+    is_rechargeable: bool = True
+    cell_count: int = 1
+    nominal_voltage_mv: int
+    min_voltage_mv: int
+    max_voltage_mv: int
+    notes: str | None = None
+
+VALID_BATTERY_CHEMISTRIES = ("li-ion", "lipo", "nimh", "alkaline", "cr2032")
+
+@app.post("/battery_profiles")
+def create_battery_profile(data: BatteryProfileCreate, current_user: User = Depends(get_current_user)):
+    if data.chemistry not in VALID_BATTERY_CHEMISTRIES:
+        raise HTTPException(status_code=400, detail=f"chemistry must be one of {VALID_BATTERY_CHEMISTRIES}")
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        """
+        INSERT INTO battery_profiles (name, chemistry, is_rechargeable, cell_count, nominal_voltage_mv, min_voltage_mv, max_voltage_mv, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING battery_profile_id;
+        """,
+        (data.name, data.chemistry, data.is_rechargeable, data.cell_count,
+         data.nominal_voltage_mv, data.min_voltage_mv, data.max_voltage_mv, data.notes),
+    )
+    battery_profile_id = cur.fetchone()[0]
+    log_platform_event(cur, "battery_profile_catalog_created", current_user.user_id, "battery_profile",
+                        str(battery_profile_id), {"name": data.name, "chemistry": data.chemistry})
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "battery_profile_created", "battery_profile_id": battery_profile_id}
+
+@app.get("/battery_profiles")
+def list_battery_profiles(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT battery_profile_id, name, chemistry, is_rechargeable, cell_count,
+               nominal_voltage_mv, min_voltage_mv, max_voltage_mv, notes
+        FROM battery_profiles ORDER BY name;
+        """
+    )
+    profiles = cur.fetchall()
+    result = []
+    for pid, name, chemistry, is_rechargeable, cell_count, nominal_mv, min_mv, max_mv, notes in profiles:
+        cur.execute(
+            "SELECT voltage_mv, percentage FROM battery_discharge_points WHERE battery_profile_id = %s ORDER BY voltage_mv DESC;",
+            (pid,),
+        )
+        points = [{"voltage_mv": r[0], "percentage": r[1]} for r in cur.fetchall()]
+        result.append({
+            "battery_profile_id": pid, "name": name, "chemistry": chemistry,
+            "is_rechargeable": is_rechargeable, "cell_count": cell_count,
+            "nominal_voltage_mv": nominal_mv, "min_voltage_mv": min_mv, "max_voltage_mv": max_mv,
+            "notes": notes, "discharge_points": points,
+        })
+    cur.close(); conn.close()
+    return {"battery_profiles": result}
+
+class BatteryDischargePointCreate(BaseModel):
+    voltage_mv: int
+    percentage: int
+
+@app.post("/battery_profiles/{battery_profile_id}/discharge_points")
+def add_battery_discharge_point(battery_profile_id: int, data: BatteryDischargePointCreate, current_user: User = Depends(get_current_user)):
+    if not (0 <= data.percentage <= 100):
+        raise HTTPException(status_code=400, detail="percentage must be between 0 and 100")
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute("SELECT 1 FROM battery_profiles WHERE battery_profile_id = %s;", (battery_profile_id,))
+    if not cur.fetchone():
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Battery profile not found")
+    cur.execute(
+        """
+        INSERT INTO battery_discharge_points (battery_profile_id, voltage_mv, percentage)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (battery_profile_id, voltage_mv) DO UPDATE SET percentage = EXCLUDED.percentage
+        RETURNING battery_discharge_point_id;
+        """,
+        (battery_profile_id, data.voltage_mv, data.percentage),
+    )
+    point_id = cur.fetchone()[0]
+    log_platform_event(cur, "battery_profile_discharge_point_added", current_user.user_id, "battery_discharge_point",
+                        str(point_id), {"battery_profile_id": battery_profile_id, "voltage_mv": data.voltage_mv,
+                                        "percentage": data.percentage})
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "discharge_point_saved", "battery_discharge_point_id": point_id}
+
+class DeviceBatteryProfileUpdate(BaseModel):
+    battery_profile_id: int | None = None  # null = not powered by batteries / not set
+
+@app.post("/gateways/{gateway_id}/battery_profile")
+def set_gateway_battery_profile(gateway_id: str, data: DeviceBatteryProfileUpdate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT org_id, site_id FROM gateways WHERE gateway_id = %s;", (gateway_id,))
+    row = cur.fetchone()
+    if not row or row[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Gateway not found")
+    require_site_access(cur, current_user, current_user.org_id, row[1], admin=True)
+    if data.battery_profile_id is not None:
+        cur.execute("SELECT 1 FROM battery_profiles WHERE battery_profile_id = %s;", (data.battery_profile_id,))
+        if not cur.fetchone():
+            cur.close(); conn.close()
+            raise HTTPException(status_code=404, detail="Battery profile not found")
+    cur.execute("UPDATE gateways SET battery_profile_id = %s WHERE gateway_id = %s;", (data.battery_profile_id, gateway_id))
+    log_event(cur, current_user.org_id, "device_battery_profile_set", current_user.user_id, "gateway", gateway_id,
+              {"battery_profile_id": data.battery_profile_id})
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "battery_profile_updated", "gateway_id": gateway_id, "battery_profile_id": data.battery_profile_id}
+
+@app.post("/sensors/{sensor_id}/battery_profile")
+def set_sensor_battery_profile(sensor_id: str, data: DeviceBatteryProfileUpdate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT org_id, site_id FROM sensors WHERE sensor_id = %s;", (sensor_id,))
+    row = cur.fetchone()
+    if not row or row[0] != current_user.org_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Sensor not found")
+    require_site_access(cur, current_user, current_user.org_id, row[1], admin=True)
+    if data.battery_profile_id is not None:
+        cur.execute("SELECT 1 FROM battery_profiles WHERE battery_profile_id = %s;", (data.battery_profile_id,))
+        if not cur.fetchone():
+            cur.close(); conn.close()
+            raise HTTPException(status_code=404, detail="Battery profile not found")
+    cur.execute("UPDATE sensors SET battery_profile_id = %s WHERE sensor_id = %s;", (data.battery_profile_id, sensor_id))
+    log_event(cur, current_user.org_id, "device_battery_profile_set", current_user.user_id, "sensor", sensor_id,
+              {"battery_profile_id": data.battery_profile_id})
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "battery_profile_updated", "sensor_id": sensor_id, "battery_profile_id": data.battery_profile_id}
+
+
+# =====================================================================================
+# Reports (RPT-5/RPT-6, DB-3) — report_templates (seeded, read-only) + user_reports
+# =====================================================================================
+# report_templates is metadata only (key/name/description/category) — the actual report
+# *computation* lives in the frontend (frontend/reports.py), fed by data endpoints that
+# already exist (readings, alerts, gateways, sensors, sites). Keeping it this way avoids
+# building a generic query-builder abstraction for 9 fairly different report shapes.
+# user_reports is how a customised view (site/device/date-range/thresholds, in `config`)
+# gets saved under a name, without altering the template. Scoped to the owning user.
+
+@app.get("/report_templates")
+def list_report_templates(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT report_template_id, key, name, description, category FROM report_templates ORDER BY category, name;")
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"report_templates": [
+        {"report_template_id": r[0], "key": r[1], "name": r[2], "description": r[3], "category": r[4]}
+        for r in rows
+    ]}
+
+class UserReportCreate(BaseModel):
+    report_template_id: int
+    name: str
+    config: dict = {}
+
+@app.post("/user_reports")
+def create_user_report(data: UserReportCreate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT 1 FROM report_templates WHERE report_template_id = %s;", (data.report_template_id,))
+    if not cur.fetchone():
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Report template not found")
+    cur.execute(
+        """
+        INSERT INTO user_reports (org_id, owner_user_id, report_template_id, name, config)
+        VALUES (%s, %s, %s, %s, %s) RETURNING user_report_id;
+        """,
+        (current_user.org_id, current_user.user_id, data.report_template_id, data.name, Json(data.config)),
+    )
+    user_report_id = cur.fetchone()[0]
+    log_event(cur, current_user.org_id, "report_created", current_user.user_id, "user_report",
+              str(user_report_id), {"name": data.name, "report_template_id": data.report_template_id})
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "user_report_created", "user_report_id": user_report_id}
+
+@app.get("/user_reports")
+def list_user_reports(current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT ur.user_report_id, ur.name, ur.config, ur.report_template_id, rt.key, rt.name, ur.updated_at
+        FROM user_reports ur JOIN report_templates rt ON rt.report_template_id = ur.report_template_id
+        WHERE ur.owner_user_id = %s ORDER BY ur.updated_at DESC;
+        """,
+        (current_user.user_id,),
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"user_reports": [
+        {"user_report_id": r[0], "name": r[1], "config": r[2], "report_template_id": r[3],
+         "template_key": r[4], "template_name": r[5], "updated_at": r[6].isoformat()}
+        for r in rows
+    ]}
+
+class UserReportUpdate(BaseModel):
+    name: str | None = None
+    config: dict | None = None
+
+@app.put("/user_reports/{user_report_id}")
+def update_user_report(user_report_id: int, data: UserReportUpdate, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT owner_user_id FROM user_reports WHERE user_report_id = %s;", (user_report_id,))
+    row = cur.fetchone()
+    if not row or row[0] != current_user.user_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Report not found")
+    fields, values = [], []
+    if data.name is not None:
+        fields.append("name = %s"); values.append(data.name)
+    if data.config is not None:
+        fields.append("config = %s"); values.append(Json(data.config))
+    if fields:
+        fields.append("updated_at = NOW()")
+        values.append(user_report_id)
+        cur.execute(f"UPDATE user_reports SET {', '.join(fields)} WHERE user_report_id = %s;", values)
+        log_event(cur, current_user.org_id, "report_updated", current_user.user_id, "user_report",
+                  str(user_report_id), {"name": data.name} if data.name is not None else None)
+        conn.commit()
+    cur.close(); conn.close()
+    return {"status": "user_report_updated", "user_report_id": user_report_id}
+
+@app.delete("/user_reports/{user_report_id}")
+def delete_user_report(user_report_id: int, current_user: User = Depends(get_current_user)):
+    conn = get_db(); cur = conn.cursor()
+    cur.execute("SELECT owner_user_id FROM user_reports WHERE user_report_id = %s;", (user_report_id,))
+    row = cur.fetchone()
+    if not row or row[0] != current_user.user_id:
+        cur.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Report not found")
+    cur.execute("DELETE FROM user_reports WHERE user_report_id = %s;", (user_report_id,))
+    log_event(cur, current_user.org_id, "report_deleted", current_user.user_id, "user_report",
+              str(user_report_id), None)
+    conn.commit(); cur.close(); conn.close()
+    return {"status": "user_report_deleted", "user_report_id": user_report_id}
+
+
+# =====================================================================================
 # MCU catalog CRUD (mcu_variants, mcu_variant_gpio_pins, module_mcu_compatibility)
 # =====================================================================================
 # These three tables are GLOBAL/factory reference data (no org_id column at all — they
@@ -2967,6 +3388,8 @@ def create_mcu_variant(data: McuVariantCreate, current_user: User = Depends(get_
     require_platform_admin(cur, current_user)
     cur.execute("INSERT INTO mcu_variants (name) VALUES (%s) RETURNING mcu_variant_id;", (data.name,))
     mcu_variant_id = cur.fetchone()[0]
+    log_platform_event(cur, "mcu_variant_catalog_created", current_user.user_id, "mcu_variant",
+                        str(mcu_variant_id), {"name": data.name})
     conn.commit(); cur.close(); conn.close()
     return {"status": "mcu_variant_created", "mcu_variant_id": mcu_variant_id}
 
@@ -2999,6 +3422,8 @@ def add_gpio_pin(mcu_variant_id: int, data: GpioPinCreate, current_user: User = 
         (mcu_variant_id, data.gpio_pin, data.status, data.notes),
     )
     pin_id = cur.fetchone()[0]
+    log_platform_event(cur, "mcu_variant_gpio_pin_added", current_user.user_id, "mcu_variant_gpio_pin",
+                        str(pin_id), {"mcu_variant_id": mcu_variant_id, "gpio_pin": data.gpio_pin, "status": data.status})
     conn.commit(); cur.close(); conn.close()
     return {"status": "gpio_pin_saved", "mcu_variant_gpio_pin_id": pin_id}
 
@@ -3025,6 +3450,9 @@ def add_module_compatibility(data: ModuleCompatibilityCreate, current_user: User
         "INSERT INTO module_mcu_compatibility (module_type_id, mcu_variant_id) VALUES (%s, %s) ON CONFLICT DO NOTHING;",
         (data.module_type_id, data.mcu_variant_id),
     )
+    log_platform_event(cur, "module_mcu_compatibility_created", current_user.user_id, "module_mcu_compatibility",
+                        f"{data.module_type_id}:{data.mcu_variant_id}",
+                        {"module_type_id": data.module_type_id, "mcu_variant_id": data.mcu_variant_id})
     conn.commit(); cur.close(); conn.close()
     return {"status": "compatibility_added"}
 
@@ -3047,6 +3475,9 @@ def delete_module_compatibility(module_type_id: int, mcu_variant_id: int, curren
         "DELETE FROM module_mcu_compatibility WHERE module_type_id = %s AND mcu_variant_id = %s;",
         (module_type_id, mcu_variant_id),
     )
+    log_platform_event(cur, "module_mcu_compatibility_deleted", current_user.user_id, "module_mcu_compatibility",
+                        f"{module_type_id}:{mcu_variant_id}",
+                        {"module_type_id": module_type_id, "mcu_variant_id": mcu_variant_id})
     conn.commit(); cur.close(); conn.close()
     return {"status": "compatibility_removed"}
 
@@ -3082,6 +3513,8 @@ def create_device_registry_entry(data: DeviceRegistryCreate, current_user: User 
         (data.serial_number, data.device_type, data.model, data.mcu_variant_id,
          data.flash_kb, data.psram_kb, data.ram_kb),
     )
+    log_platform_event(cur, "device_registry_entry_created", current_user.user_id, "device_registry",
+                        data.serial_number, {"device_type": data.device_type, "model": data.model})
     conn.commit(); cur.close(); conn.close()
     return {"status": "device_registered", "serial_number": data.serial_number}
 
@@ -3152,6 +3585,10 @@ def update_device_registry_entry(serial_number: str, data: DeviceRegistryUpdate,
     if fields:
         values.append(serial_number)
         cur.execute(f"UPDATE device_registry SET {', '.join(fields)} WHERE serial_number = %s;", values)
+        updated_fields = [col for col in ("model", "mcu_variant_id", "flash_kb", "psram_kb", "ram_kb")
+                           if getattr(data, col) is not None]
+        log_platform_event(cur, "device_registry_entry_updated", current_user.user_id, "device_registry",
+                            serial_number, {"updated_fields": updated_fields})
     conn.commit(); cur.close(); conn.close()
     return {"status": "device_updated", "serial_number": serial_number}
 
@@ -3168,6 +3605,8 @@ def delete_device_registry_entry(serial_number: str, current_user: User = Depend
         cur.close(); conn.close()
         raise HTTPException(status_code=400, detail="Cannot delete a provisioned device from the registry — deprovision it first")
     cur.execute("DELETE FROM device_registry WHERE serial_number = %s;", (serial_number,))
+    log_platform_event(cur, "device_registry_entry_deleted", current_user.user_id, "device_registry",
+                        serial_number, None)
     conn.commit(); cur.close(); conn.close()
     return {"status": "device_deleted", "serial_number": serial_number}
 
@@ -3188,6 +3627,8 @@ def add_device_radio(serial_number: str, data: DeviceRadioCreate, current_user: 
         (serial_number, data.radio_type, data.mac_address),
     )
     radio_id = cur.fetchone()[0]
+    log_platform_event(cur, "device_registry_radio_added", current_user.user_id, "device_radio",
+                        str(radio_id), {"serial_number": serial_number, "radio_type": data.radio_type})
     conn.commit(); cur.close(); conn.close()
     return {"status": "radio_added", "device_radio_id": radio_id}
 
@@ -3208,6 +3649,8 @@ def delete_device_radio(serial_number: str, device_radio_id: int, current_user: 
     conn = get_db(); cur = conn.cursor()
     require_platform_admin(cur, current_user)
     cur.execute("DELETE FROM device_radios WHERE device_radio_id = %s AND serial_number = %s;", (device_radio_id, serial_number))
+    log_platform_event(cur, "device_registry_radio_removed", current_user.user_id, "device_radio",
+                        str(device_radio_id), {"serial_number": serial_number})
     conn.commit(); cur.close(); conn.close()
     return {"status": "radio_deleted", "device_radio_id": device_radio_id}
 
@@ -3234,6 +3677,8 @@ def create_sensor_module_type(data: SensorModuleTypeCreate, current_user: User =
         (data.module_type, data.name, data.communication_type, data.default_i2c_address),
     )
     module_type_id = cur.fetchone()[0]
+    log_platform_event(cur, "sensor_module_type_created", current_user.user_id, "sensor_module_type",
+                        str(module_type_id), {"module_type": data.module_type, "name": data.name})
     conn.commit(); cur.close(); conn.close()
     return {"status": "module_type_created", "module_type_id": module_type_id}
 
@@ -3271,6 +3716,9 @@ def update_sensor_module_type(module_type_id: int, data: SensorModuleTypeUpdate,
     if cur.rowcount == 0:
         conn.rollback(); cur.close(); conn.close()
         raise HTTPException(status_code=404, detail="Module type not found")
+    log_platform_event(cur, "sensor_module_type_updated", current_user.user_id, "sensor_module_type",
+                        str(module_type_id), {"updated_fields": [col for col in ("name", "communication_type", "default_i2c_address")
+                                                                  if getattr(data, col) is not None]})
     conn.commit(); cur.close(); conn.close()
     return {"status": "module_type_updated", "module_type_id": module_type_id}
 
@@ -3282,6 +3730,8 @@ def delete_sensor_module_type(module_type_id: int, current_user: User = Depends(
     if cur.rowcount == 0:
         conn.rollback(); cur.close(); conn.close()
         raise HTTPException(status_code=404, detail="Module type not found")
+    log_platform_event(cur, "sensor_module_type_deleted", current_user.user_id, "sensor_module_type",
+                        str(module_type_id), None)
     conn.commit(); cur.close(); conn.close()
     return {"status": "module_type_deleted", "module_type_id": module_type_id}
 
@@ -3325,6 +3775,8 @@ def enable_support_access(current_user: User = Depends(get_current_user)):
         (current_user.user_id, expires_at),
     )
     grant_id = cur.fetchone()[0]
+    log_event(cur, current_user.org_id, "support_access_enabled", current_user.user_id, "user",
+              str(current_user.user_id), {"grant_id": grant_id})
     conn.commit(); cur.close(); conn.close()
     return {"status": "enabled", "grant_id": grant_id, "expires_at": expires_at.isoformat()}
 
@@ -3336,6 +3788,9 @@ def revoke_support_access(current_user: User = Depends(get_current_user)):
         (current_user.user_id,),
     )
     updated = cur.rowcount
+    if updated > 0:
+        log_event(cur, current_user.org_id, "support_access_revoked", current_user.user_id, "user",
+                  str(current_user.user_id), None)
     conn.commit(); cur.close(); conn.close()
     if updated == 0:
         raise HTTPException(status_code=400, detail="No active Support Access grant to revoke")
@@ -3376,6 +3831,29 @@ def list_support_access_grants(current_user: User = Depends(get_current_user)):
     return {"grants": [
         {"grant_id": r[0], "user_id": r[1], "email": r[2], "org_id": r[3],
          "granted_at": r[4].isoformat(), "expires_at": r[5].isoformat()}
+        for r in rows
+    ]}
+
+@app.get("/support-access/sessions/mine")
+def list_my_support_sessions(current_user: User = Depends(get_current_user)):
+    """API-7: an admin's own Support Access session history — previously the only read
+    path was /support-access/grants (currently-active grants org-wide), with no way to see
+    what *you* personally have looked at. Most-recent first, capped at 200."""
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    cur.execute(
+        """
+        SELECT s.session_id, s.grant_id, s.target_user_id, u.email, s.started_at, s.ended_at
+        FROM support_access_sessions s JOIN users u ON u.user_id = s.target_user_id
+        WHERE s.admin_user_id = %s ORDER BY s.started_at DESC LIMIT 200;
+        """,
+        (current_user.user_id,),
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"sessions": [
+        {"session_id": r[0], "grant_id": r[1], "target_user_id": r[2], "target_email": r[3],
+         "started_at": r[4].isoformat(), "ended_at": r[5].isoformat() if r[5] else None}
         for r in rows
     ]}
 
@@ -3430,3 +3908,122 @@ def end_support_session(session_id: int, current_user: User = Depends(get_curren
     log_event(cur, target_org_id, "support_access_session_ended", current_user.user_id, "user", str(target_user_id), {"session_id": session_id})
     conn.commit(); cur.close(); conn.close()
     return {"status": "session_ended", "session_id": session_id}
+
+# =====================================================================================
+# Audit Log — API-5
+# =====================================================================================
+
+@app.get("/events")
+def list_events(event_type: str | None = None, target_type: str | None = None,
+                 actor_user_id: int | None = None, start_date: str | None = None,
+                 end_date: str | None = None, limit: int = 100, offset: int = 0,
+                 current_user: User = Depends(get_current_user)):
+    """Org-scoped audit log read. Same RBAC bar as /backups. Table name is built from
+    current_user.org_id, a trusted int resolved from the JWT via get_current_user — never
+    from request input, same trust boundary log_event() itself relies on."""
+    conn = get_db(); cur = conn.cursor()
+    require_org_admin(cur, current_user)
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+    tbl = f"org_event_log_org_{int(current_user.org_id)}"
+    query = f"SELECT event_id, event_type, actor_user_id, target_type, target_id, details, created_at FROM {tbl} WHERE TRUE"
+    params = []
+    if event_type is not None:
+        query += " AND event_type = %s"; params.append(event_type)
+    if target_type is not None:
+        query += " AND target_type = %s"; params.append(target_type)
+    if actor_user_id is not None:
+        query += " AND actor_user_id = %s"; params.append(actor_user_id)
+    if start_date is not None:
+        query += " AND created_at::date >= %s::date"; params.append(start_date)
+    if end_date is not None:
+        query += " AND created_at::date <= %s::date"; params.append(end_date)
+    query += " ORDER BY created_at DESC LIMIT %s OFFSET %s;"
+    params.extend([limit, offset])
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return {"events": [
+        {"event_id": r[0], "event_type": r[1], "actor_user_id": r[2], "target_type": r[3],
+         "target_id": r[4], "details": r[5], "created_at": r[6].isoformat() if r[6] else None}
+        for r in rows
+    ]}
+
+@app.get("/events/platform")
+def list_platform_events(event_type: str | None = None, target_type: str | None = None,
+                          actor_user_id: int | None = None, org_id: int | None = None,
+                          start_date: str | None = None, end_date: str | None = None,
+                          limit: int = 100, offset: int = 0,
+                          current_user: User = Depends(get_current_user)):
+    """Platform-wide audit log read, is_watchdog_admin only. Cross-org tenant events —
+    unioned across each org's physical event-log table — plus WatchDog-staff
+    platform-catalog events from platform_event_log. Per-org table names are built from
+    org_id values read from `organisations` itself, never from request input, same trust
+    boundary log_event() already relies on."""
+    conn = get_db(); cur = conn.cursor()
+    require_platform_admin(cur, current_user)
+    limit = max(1, min(limit, 500))
+    offset = max(0, offset)
+
+    cur.execute("SELECT org_id, name FROM organisations ORDER BY org_id;")
+    orgs = cur.fetchall()
+    if org_id is not None:
+        orgs = [o for o in orgs if o[0] == org_id]
+
+    org_events = []
+    if orgs:
+        branches = []
+        union_params = []
+        for oid, oname in orgs:
+            tbl = f"org_event_log_org_{int(oid)}"
+            branches.append(
+                f"SELECT %s::int AS org_id, %s::text AS org_name, event_id, event_type, "
+                f"actor_user_id, target_type, target_id, details, created_at FROM {tbl}"
+            )
+            union_params.extend([oid, oname])
+        outer = f"SELECT * FROM ({' UNION ALL '.join(branches)}) e WHERE TRUE"
+        params = list(union_params)
+        if event_type is not None:
+            outer += " AND event_type = %s"; params.append(event_type)
+        if target_type is not None:
+            outer += " AND target_type = %s"; params.append(target_type)
+        if actor_user_id is not None:
+            outer += " AND actor_user_id = %s"; params.append(actor_user_id)
+        if start_date is not None:
+            outer += " AND created_at::date >= %s::date"; params.append(start_date)
+        if end_date is not None:
+            outer += " AND created_at::date <= %s::date"; params.append(end_date)
+        outer += " ORDER BY created_at DESC LIMIT %s OFFSET %s;"
+        params.extend([limit, offset])
+        cur.execute(outer, params)
+        org_events = [
+            {"org_id": r[0], "org_name": r[1], "event_id": r[2], "event_type": r[3],
+             "actor_user_id": r[4], "target_type": r[5], "target_id": r[6], "details": r[7],
+             "created_at": r[8].isoformat() if r[8] else None}
+            for r in cur.fetchall()
+        ]
+
+    platform_query = ("SELECT event_id, event_type, actor_user_id, target_type, target_id, "
+                       "details, created_at FROM platform_event_log WHERE TRUE")
+    platform_params = []
+    if event_type is not None:
+        platform_query += " AND event_type = %s"; platform_params.append(event_type)
+    if target_type is not None:
+        platform_query += " AND target_type = %s"; platform_params.append(target_type)
+    if actor_user_id is not None:
+        platform_query += " AND actor_user_id = %s"; platform_params.append(actor_user_id)
+    if start_date is not None:
+        platform_query += " AND created_at::date >= %s::date"; platform_params.append(start_date)
+    if end_date is not None:
+        platform_query += " AND created_at::date <= %s::date"; platform_params.append(end_date)
+    platform_query += " ORDER BY created_at DESC LIMIT %s OFFSET %s;"
+    platform_params.extend([limit, offset])
+    cur.execute(platform_query, platform_params)
+    platform_events = [
+        {"event_id": r[0], "event_type": r[1], "actor_user_id": r[2], "target_type": r[3],
+         "target_id": r[4], "details": r[5], "created_at": r[6].isoformat() if r[6] else None}
+        for r in cur.fetchall()
+    ]
+
+    cur.close(); conn.close()
+    return {"org_events": org_events, "platform_events": platform_events}
